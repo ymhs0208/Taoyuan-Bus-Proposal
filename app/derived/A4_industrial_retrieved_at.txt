@@ -1,0 +1,1 @@
+2026-10-24 11:13:19 (UTC+8)；OSM Overpass landuse=industrial；bbox 24.9874,121.2296,25.1165,121.3279

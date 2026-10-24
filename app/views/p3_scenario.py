@@ -1,0 +1,417 @@
+import json
+
+import folium
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import shapely
+import streamlit as st
+from streamlit_folium import st_folium
+
+from lib import data as D, driver as DR, metrics as M, proxy as X, ui
+
+ui.banner()
+st.title("🧪 情境模擬：S0 現況 vs. 自訂情境")
+st.caption("裁切既有路線、新增接駁線，指標即時由資料重算。所有情境皆為研究示意，不代表市府或業者方案。")
+if not ui.require_data():
+    st.stop()
+src = D.current_source()
+rts = D.routes(src)
+stg = D.stations()
+if D.isochrones() is None or D.villages() is None:
+    st.warning("需要等時圈（A2_isochrones.gpkg）與村里人口（villages_pop65.gpkg）才能模擬。")
+    st.stop()
+CODES = list(stg.code)
+NAMES = dict(zip(stg.code, stg.name))
+
+ss = st.session_state
+ss.setdefault("scn_mods", [])
+ss.setdefault("scn_feeders", [])
+ss.setdefault("fd_custom", [])
+ss.setdefault("fd_stops", [])
+# 切換資料來源時，既有路線代碼不同 → 清掉修改
+if ss.get("scn_src") != src:
+    ss.scn_mods, ss.scn_src = [], src
+
+with st.sidebar:
+    st.markdown("**模擬參數**")
+    R = st.select_slider("長者可接受步行距離（到站牌，直線 m）", [200, 300, 400, 500], value=300)
+    CONN = st.select_slider("「直達車站」判定：站牌在車站步行等時圈內（m）", [300, 500, 800], value=500)
+    st.markdown("**駕駛人力換算參數**")
+    SPEED = st.number_input("預設營運速率 km/h【假設，可調整】", 8.0, 40.0, 18.0, 0.5,
+                            help="pilot/data/tdx 沒有 S2STravelTime，桃園班表只有起點發車時刻，無法由班表算行駛時間。A1 樣本足夠時可改用實測。此值不是官方數字。")
+    USE_A1 = st.checkbox("A1 樣本足夠的路線改用實測速率", value=True,
+                         help=f"同車同路線相鄰兩次輪詢（間隔 30–180 秒）的直線位移 ÷ 時間，每路線方向至少 {DR.MIN_PAIRS} 組樣本才採用。")
+    SHIFT_H = st.number_input("每一駕駛班次的駕駛時數 h【假設，可調整】", 4.0, 12.0, 8.0, 0.5,
+                              help="用來把車輛小時換算成「約當駕駛班次」；未含休息、備勤、輪休。")
+
+
+@st.cache_resource(max_entries=40, show_spinner="重新計算情境指標…")
+def run(source, rsig, R, conn, mods_json, feeders_json):
+    mods, feeders = json.loads(mods_json), json.loads(feeders_json)
+    net = M.build_network(source, mods, feeders)
+    return net, M.evaluate(net, R, conn)
+
+
+RS = D.routes_sig(src)
+net0, e0 = run(src, RS, R, CONN, "[]", "[]")
+
+ov = M.overlap_table(src, 500, RS)
+rank_keys = list(ov.key) if not ov.empty else []
+all_keys = rank_keys + sorted(k for k in rts if k not in set(rank_keys))
+gr_keys = [k for k in rank_keys if rts[k]["sub"] == "GR"]
+TRIPS = D.weekday_trips() if src == "tdx" else {}
+_gr_trips = [TRIPS[k] for k in gr_keys if TRIPS.get(k)]
+with st.sidebar:
+    FT = st.number_input("預設接駁線平日班次（整圈）【假設，可調整】", 0, 200, int(max(_gr_trips)) if _gr_trips else 0, 1,
+                         help=("預設採 GR 現況平日單向班次（TDX 班表）作為比較基準" if _gr_trips else "沒有 GR 班表資料，請自行輸入") +
+                              "；套用於預設接駁線，與勾選「使用預設班次」的自訂接駁線。")
+
+
+# ---------------------------------------------------------------- 預設情境（callbacks）
+def preset_gr():
+    ss.scn_mods = [m for m in ss.scn_mods if m["key"] not in gr_keys] + [
+        dict(type="drop_parallel", key=k, radius=500, stations=CODES, desc=f"{rts[k]['short']}：刪除 7 站 500 m 間的平行區段") for k in gr_keys]
+
+
+def preset_feeder(code="G14"):
+    pts = M.greedy_feeder(src, code, e0, net0, R)
+    if pts:
+        ss.scn_feeders = [f for f in ss.scn_feeders if f.get("preset") != code] + [
+            dict(name=f"{code} 接駁線（演算法示意）", station=code, points=[list(p) for p in pts], loop=True, preset=code, trips_default=True)]
+        ss.focus = code
+    else:
+        ss["_msg"] = f"{code} 周邊 300–1,500 m 內找不到能增加直達覆蓋的既有站牌。"
+
+
+def preset_ab():
+    preset_gr()
+    preset_feeder("G14")
+
+
+def reset():
+    ss.scn_mods, ss.scn_feeders, ss.fd_custom, ss.fd_stops = [], [], [], []
+
+
+st.markdown("**快速載入示意情境**（皆由資料與演算法即時產生，可再手動修改）")
+b1, b2, b3, b4 = st.columns(4)
+b1.button("A｜GR 平行段裁切", on_click=preset_gr, width="stretch", disabled=not gr_keys,
+          help="GR 雙向：從第一個到最後一個位於任一站 500 m 內的站牌之間的區段刪除，保留兩端（兩端各止於車站附近）。")
+b2.button("B｜G14 接駁線", on_click=preset_feeder, args=("G14",), width="stretch",
+          help="在 G14 周邊 300–1,500 m 的既有站牌中，以貪婪法挑選最多 6 站，使「可一車直達 G14 的 65+ 人口」增加最多，再以最近鄰＋2-opt 排序串接成循環線。")
+b3.button("A＋B 組合", on_click=preset_ab, width="stretch", type="primary")
+b4.button("清除，回到 S0", on_click=reset, width="stretch")
+if ss.get("_msg"):
+    st.warning(ss.pop("_msg"))
+
+left, right = st.columns([2, 3])
+
+# ---------------------------------------------------------------- 控制區
+with left:
+    t1, t2, t3 = st.tabs(["① 調整既有路線", "② 新增接駁線", f"③ 目前情境（{len(ss.scn_mods) + len(ss.scn_feeders)}）"])
+    with t1:
+        default_idx = all_keys.index(gr_keys[0]) if gr_keys else 0
+        k = st.selectbox("路線（依與綠線重疊程度排序）", all_keys, index=default_idx, format_func=lambda k: rts[k]["label"], key="md_route")
+        op = st.radio("調整方式", ["刪除與綠線平行的區段", "截短（只保留部分站序）", "整條停駛"], key="md_op")
+        s = rts[k]["stops"].reset_index(drop=True)
+        mod = None
+        if op == "刪除與綠線平行的區段":
+            rad = st.slider("站牌距車站多少公尺內算「平行」（直線）", 200, 1000, 500, 50, key="md_rad")
+            sts = st.multiselect("參考車站", CODES, default=CODES, format_func=lambda c: f"{c} {NAMES[c]}", key="md_sts")
+            mod = dict(type="drop_parallel", key=k, radius=rad, stations=sts, desc=f"{rts[k]['short']}：刪除 {'、'.join(sts)} {rad} m 間的平行區段")
+        elif op == "截短（只保留部分站序）":
+            a, b = st.select_slider("保留的站序範圍", options=list(range(len(s))), value=(0, len(s) - 1),
+                                    format_func=lambda i: f"{i + 1}. {s.name[i]}", key=f"md_rng_{k}")
+            mod = dict(type="keep_range", key=k, **{"from": a, "to": b}, desc=f"{rts[k]['short']}：只保留第 {a + 1}–{b + 1} 站（{s.name[a]}→{s.name[b]}）")
+        else:
+            mod = dict(type="remove", key=k, desc=f"{rts[k]['short']}：整條停駛")
+        prev = M.apply_mod(rts[k], mod, stg)
+        if prev is None:
+            st.caption(f"預覽：刪除全部 {len(s)} 站、{rts[k]['line'].length / 1000:.2f} km")
+        else:
+            L1 = sum(l.length for l in prev["lines"]) / 1000
+            st.caption(f"預覽：保留 {len(prev['stops'])}／{len(s)} 站；長度 {rts[k]['line'].length / 1000:.2f} → {L1:.2f} km；分成 {len(prev['lines'])} 段")
+        if st.button("➕ 加入情境", key="md_add", type="primary"):
+            ss.scn_mods = [m for m in ss.scn_mods if m["key"] != k] + [mod]
+            st.rerun()
+        same_route = [kk for kk in rts if rts[kk]["sub"] == rts[k]["sub"] and kk != k]
+        if same_route:
+            st.caption(f"提示：{rts[k]['sub']} 另有 {len(same_route)} 個方向，需分別加入。")
+
+    with t2:
+        fst = st.selectbox("接駁車站", CODES, index=CODES.index("G14") if "G14" in CODES else 0, format_func=lambda c: f"{c} {NAMES[c]}", key="fd_station")
+        rr = st.slider("候選既有站牌範圍（距車站直線 m）", 300, 3000, (300, 1500), 100, key="fd_rr")
+        srow = stg[stg.code == fst].iloc[0]
+        SP = D.stop_positions({kk: dict(sub=v["sub"], stops=v["stops"]) for kk, v in rts.items()})
+        grp = SP.groupby(["kx", "ky"]).agg(name=("name", "first"), x=("x", "first"), y=("y", "first"),
+                                          routes=("route", lambda x: " ".join(sorted(set(map(str, x)))))).reset_index()
+        grp["d"] = np.hypot(grp.x - srow.geometry.x, grp.y - srow.geometry.y)
+        cand = grp[(grp.d >= rr[0]) & (grp.d <= rr[1])].sort_values("d")
+        cand["id"] = cand.kx.astype(str) + "_" + cand.ky.astype(str)
+        cmap = cand.set_index("id")
+        ss.fd_stops = [i for i in ss.fd_stops if i in cmap.index]
+
+        def auto_pick():
+            pts = M.greedy_feeder(src, fst, e0, net0, R, rr[0], rr[1])
+            ids = []
+            for x, y, _ in pts:
+                kx, ky = int(round(x / 5)), int(round(y / 5))
+                ids.append(f"{kx}_{ky}")
+            ss.fd_stops = [i for i in ids if i in cmap.index]
+            if not ids:
+                ss["_msg"] = "此範圍內沒有能增加直達覆蓋的既有站牌。"
+
+        st.button("🤖 自動挑選站牌（貪婪法：最大化可直達本站的 65+ 人口）", on_click=auto_pick, width="stretch")
+        st.multiselect(f"經過的既有站牌（{len(cand)} 個候選）", list(cand.id), key="fd_stops",
+                       format_func=lambda i: f"{cmap.name[i]}（{cmap.d[i]:.0f} m｜{cmap.routes[i][:30]}）")
+        st.checkbox("在右側地圖點一下即新增自訂停靠點", key="fd_click")
+        if ss.fd_custom:
+            st.caption("自訂點：" + "、".join(p[2] for p in ss.fd_custom))
+            if st.button("清除自訂點"):
+                ss.fd_custom = []
+                st.rerun()
+        loop = st.checkbox("循環線（最後回到車站）", value=True, key="fd_loop")
+        order = st.radio("停靠順序", ["自動（最近鄰＋2-opt 縮短路線）", "依選取順序"], key="fd_order", horizontal=True)
+        name = st.text_input("路線名稱", value=f"{fst} 接駁線（自訂）", key="fd_name")
+        use_ft = st.checkbox(f"使用側欄的預設接駁線班次（目前 {FT} 班）", value=True, key="fd_use_ft")
+        ftrips = FT if use_ft else st.number_input("此接駁線平日班次（整圈）【假設，可調整】", 0, 200, int(FT), 1, key="fd_trips",
+                                                    help="這是使用者自行輸入的假設值，不是資料。")
+        pts = [(float(cmap.x[i]), float(cmap.y[i]), str(cmap.name[i])) for i in ss.fd_stops] + [tuple(p) for p in ss.fd_custom]
+        if order.startswith("自動"):
+            pts = M.two_opt(srow.geometry.x, srow.geometry.y, M.nn_order(srow.geometry.x, srow.geometry.y, pts), loop=loop)
+        draft = dict(name=name, station=fst, points=[list(p) for p in pts], loop=loop, trips=int(ftrips) or None, trips_default=bool(use_ft))
+        if pts:
+            dl = M.feeder_route(draft, stg)["lines"][0].length / 1000
+            st.caption(f"草稿：{len(pts)} 個停靠點＋車站端點，直線長度 {dl:.2f} km（實際道路距離會更長）")
+        ss["_draft"] = draft
+
+        def add_feeder():
+            d = ss.get("_draft")
+            if d and d["points"]:
+                ss.scn_feeders = ss.scn_feeders + [d]
+                ss.fd_stops, ss.fd_custom = [], []
+                ss.focus = d["station"]
+
+        st.button("➕ 加入情境", key="fd_add", type="primary", disabled=not pts, on_click=add_feeder)
+
+    with t3:
+        if not ss.scn_mods and not ss.scn_feeders:
+            st.info("目前為 S0（現況），尚未加入任何調整。")
+        for i, m in enumerate(list(ss.scn_mods)):
+            c1, c2 = st.columns([5, 1])
+            c1.markdown(f"✂️ {m['desc']}")
+            if c2.button("刪除", key=f"delm{i}"):
+                ss.scn_mods.pop(i)
+                st.rerun()
+        for i, f in enumerate(list(ss.scn_feeders)):
+            c1, c2 = st.columns([5, 1])
+            c1.markdown(f"🟣 **{f['name']}**：{f['station']} → " + "→".join(p[2] for p in f["points"]) + (" → 回車站" if f.get("loop") else ""))
+            if c2.button("刪除", key=f"delf{i}"):
+                ss.scn_feeders.pop(i)
+                st.rerun()
+
+# ---------------------------------------------------------------- 計算 S1
+FEEDERS = [dict(f, trips=(FT or None)) if f.get("trips_default") else f for f in ss.scn_feeders]
+mods_json = json.dumps(ss.scn_mods, ensure_ascii=False, sort_keys=True)
+feed_json = json.dumps([{k: v for k, v in f.items() if k != "trips"} for f in FEEDERS], ensure_ascii=False, sort_keys=True)
+net1, e1 = run(src, RS, R, CONN, mods_json, feed_json)
+
+feeder_codes = [f["station"] for f in ss.scn_feeders]
+with right:
+    _def = feeder_codes[-1] if feeder_codes else ss.get("fd_station", "G14")
+    if ss.get("focus") not in CODES:
+        ss.focus = _def if _def in CODES else CODES[0]
+    focus = st.selectbox("地圖與重點指標聚焦車站", CODES, format_func=lambda c: f"{c} {NAMES[c]}", key="focus")
+    grid = M.pop_grid(D.sig("data/villages_pop65.gpkg"), D.sig("data/stations_green_north.csv"))
+    m0 = e0["coverage"]["per_station"][focus]["mask"]
+    m1 = e1["coverage"]["per_station"][focus]["mask"]
+
+    def cells(mask):
+        if not mask.any():
+            return None
+        h = M.GRID / 2
+        bx = shapely.box(grid["x"][mask] - h, grid["y"][mask] - h, grid["x"][mask] + h, grid["y"][mask] + h)
+        return shapely.union_all(bx)
+
+    fm = ui.base_map(zoom=14)
+    srow = stg[stg.code == focus].iloc[0]
+    fm.location = [srow.lat, srow.lon]
+    for poly, col, lab in [(cells(m1 & ~m0), "#2ca02c", "新增：可一車直達本站的 65+ 居住範圍"),
+                           (cells(m0 & ~m1), "#d62728", "失去：原可一車直達本站的 65+ 居住範圍"),
+                           (cells(m0 & m1), "#9e9ac8", "維持")]:
+        if poly is not None:
+            folium.GeoJson(ui.to_ll(poly).__geo_interface__, style_function=lambda f, c=col: dict(fillColor=c, color=c, weight=0, fillOpacity=0.45 if c != "#9e9ac8" else 0.2),
+                           tooltip=lab).add_to(fm)
+    folium.Circle([srow.lat, srow.lon], radius=M.STUDY_R, color="#555", weight=1, fill=False, dash_array="6 6",
+                  tooltip=f"{focus} 人口分析範圍 {M.STUDY_R} m").add_to(fm)
+    for k in {m["key"] for m in ss.scn_mods}:
+        for part in ui.line_coords(rts[k]["line"]):
+            folium.PolyLine(part, color="#888", weight=3, dash_array="6 6", opacity=0.8, tooltip=f"S0：{rts[k]['label']}").add_to(fm)
+        new = net1.get(k)
+        if new:
+            for ln in new["lines"]:
+                for part in ui.line_coords(ln):
+                    folium.PolyLine(part, color="#ff7f0e", weight=5, opacity=0.9, tooltip=f"情境：{rts[k]['label']}").add_to(fm)
+        kept = set(zip(new["stops"].x.round(1), new["stops"].y.round(1))) if new else set()
+        for _, p in rts[k]["stops"].iterrows():
+            if (round(p.x, 1), round(p.y, 1)) not in kept:
+                folium.CircleMarker([p.lat, p.lon], radius=4, color="#d62728", fill=True, fill_opacity=1,
+                                    tooltip=f"取消停靠：{p['name']}").add_to(fm)
+    allf = list(ss.scn_feeders) + ([draft] if draft["points"] else [])
+    for j, f in enumerate(allf):
+        is_draft = j == len(allf) - 1 and draft["points"] and f is draft
+        fr = M.feeder_route(f, stg)
+        for ln in fr["lines"]:
+            for part in ui.line_coords(ln, simplify=0):
+                folium.PolyLine(part, color="#6a3d9a", weight=4, opacity=0.9, dash_array="8 6" if is_draft else None,
+                                tooltip=("草稿：" if is_draft else "") + f["name"]).add_to(fm)
+        for _, p in fr["stops"].iterrows():
+            la, lo = ui.xy_to_ll(p.x, p.y)
+            folium.CircleMarker([la, lo], radius=5, color="#6a3d9a", fill=True, fill_color="white", fill_opacity=1, weight=2,
+                                tooltip=p["name"]).add_to(fm)
+    ui.add_stations(fm)
+    out = st_folium(fm, height=560, use_container_width=True, returned_objects=["last_clicked"], key="scn_map")
+    st.caption("綠色＝情境新增可一車直達聚焦車站的 65+ 居住範圍；紅色＝失去；紫灰＝維持。灰虛線＝S0 原路線；橘色＝調整後路線；紅點＝取消停靠；紫色＝接駁線（虛線為草稿）。")
+    if ss.get("fd_click") and out and out.get("last_clicked"):
+        lc = out["last_clicked"]
+        tag = (round(lc["lat"], 6), round(lc["lng"], 6))
+        if ss.get("_last_click") != tag:
+            ss["_last_click"] = tag
+            x, y = ui.ll_to_xy(lc["lat"], lc["lng"])
+            ss.fd_custom = ss.fd_custom + [[float(x), float(y), f"自訂點{len(ss.fd_custom) + 1}"]]
+            st.rerun()
+
+# ---------------------------------------------------------------- 結果
+st.divider()
+st.subheader("S0 現況 vs. 自訂情境")
+# ---- 駕駛人力（頭條指標）
+SPEEDS = DR.a1_speeds() if USE_A1 else {}
+DT = DR.driver_table(rts, net1, ss.scn_mods, FEEDERS, TRIPS, SPEEDS, SPEED, SHIFT_H, USE_A1, e1["length_km"])
+CT = DR.corridor_totals(rts, net1, TRIPS, SPEEDS, SPEED, USE_A1, e1["length_km"], FEEDERS)
+if TRIPS:
+    mod_part = DT[DT.類型 == "調整既有路線"] if not DT.empty else DT
+    fd_part = DT[DT.類型 == "新增接駁線"] if not DT.empty else DT
+    saved = float((mod_part.S0_班次 - mod_part.情境_班次).sum()) if len(mod_part) else 0.0
+    need = float(fd_part.情境_班次.sum()) if len(fd_part) else 0.0
+    no_tt = int(mod_part.平日班次.isna().sum()) if len(mod_part) else 0
+    no_fd = int(fd_part.平日班次.isna().sum()) if len(fd_part) else 0
+    st.markdown(
+        f"""<div style="background:#eef7ee;border:2px solid #1a7f37;border-radius:10px;padding:12px 18px;margin:6px 0 12px 0">
+        <div style="font-size:0.95rem;color:#1a5f2a">👷 <b>可移轉駕駛人力</b>（平日，約當駕駛班次）＝ 裁切節省 − 新接駁線所需</div>
+        <div style="font-size:2.3rem;font-weight:800;color:#145a24">{saved - need:+.1f} 班</div>
+        <div style="font-size:0.9rem;color:#333">裁切節省 {saved:.1f} 班 − 接駁線需要 {need:.1f} 班｜每班 {SHIFT_H:g} 小時【假設】、
+        預設速率 {SPEED:g} km/h【假設】{('、' + str(len(SPEEDS) - (1 if '_ALL' in SPEEDS else 0)) + ' 個路線方向用 A1 實測速率') if SPEEDS else '（A1 樣本尚不足，全部用預設速率）'}</div></div>""",
+        unsafe_allow_html=True)
+    if no_tt or no_fd:
+        st.warning(f"{no_tt} 條調整路線沒有 TDX 班表、{no_fd} 條接駁線未設定班次，這些未計入人力換算。")
+    d1, d2, d3 = st.columns(3)
+    d1.metric("平日車公里（有班表路線＋接駁線）", f"{CT['s1_km']:,.0f}", f"{CT['s1_km'] - CT['s0_km']:+,.0f}（S0 {CT['s0_km']:,.0f}）", delta_color="inverse")
+    d2.metric("平日車輛小時", f"{CT['s1_h']:,.1f}", f"{CT['s1_h'] - CT['s0_h']:+,.1f}（S0 {CT['s0_h']:,.1f}）", delta_color="inverse")
+    d3.metric("約當駕駛班次", f"{CT['s1_h'] / SHIFT_H:,.1f}", f"{(CT['s1_h'] - CT['s0_h']) / SHIFT_H:+,.1f}（S0 {CT['s0_h'] / SHIFT_H:,.1f}）", delta_color="inverse")
+    st.caption(f"範圍：有 TDX 班表的 {sum(1 for k in TRIPS if k in rts)} 個路線方向（7 站 800 m 步行範圍內的路線）＋情境中的接駁線。")
+else:
+    st.info("駕駛人力換算需要 TDX 班表（pilot/data/tdx/Schedule_*.json.gz）與 TDX 資料來源；目前無法計算。")
+c0, c1 = e0["coverage"], e1["coverage"]
+p0, p1 = c0["per_station"][focus], c1["per_station"][focus]
+base_len = sum(rts[m["key"]]["line"].length for m in ss.scn_mods) / 1000
+new_len = sum(e1["length_km"].get(m["key"], 0.0) for m in ss.scn_mods)
+feed_len = sum(v for k, v in e1["length_km"].items() if k.startswith("FEEDER"))
+k1, k2, k3, k4 = st.columns(4)
+k1.metric(f"{focus} 1.5 km 內、可一車直達本站的 65+", ui.fmt_int(p1["direct"]), f"{p1['direct'] - p0['direct']:+,.0f} 人",
+          help=f"{focus} 周邊 {M.STUDY_R} m 範圍內，距離『有站牌在本站 {CONN} m 步行等時圈內的路線』之任一站牌 {R} m（直線）以內的 65+ 人口估計。範圍內 65+ 總數約 {p0['total']:,.0f} 人。")
+k2.metric("研究範圍內可一車直達綠線任一站的 65+", ui.fmt_int(c1["conn"]), f"{c1['conn'] - c0['conn']:+,.0f} 人",
+          help=f"研究範圍＝7 站各 {M.STUDY_R} m 圓形聯集，65+ 總數約 {c0['total']:,.0f} 人。")
+k3.metric(f"研究範圍內距任一公車站牌 {R} m 內的 65+", ui.fmt_int(c1["any"]), f"{c1['any'] - c0['any']:+,.0f} 人")
+k4.metric("路線單程長度變化（調整路線＋新接駁線）", f"{new_len - base_len + feed_len:+.2f} km",
+          f"既有 {base_len:.2f}→{new_len:.2f} km；新線 +{feed_len:.2f} km", delta_color="off")
+
+
+
+@st.cache_resource(show_spinner=False)
+def ind_corridor(isig):
+    ind = X.load_industrial()
+    if ind is None:
+        return None
+    from shapely.ops import unary_union
+    corr = unary_union([g.buffer(X.NEAR_R) for g in stg.geometry])
+    return unary_union(list(ind.geometry)).intersection(corr)
+
+
+def conn_xy(net, ev):
+    xs = [np.column_stack([net[k]["stops"].x.values, net[k]["stops"].y.values]) for k in ev["conn_keys"] if k in net and len(net[k]["stops"])]
+    return np.unique(np.round(np.vstack(xs), 0), axis=0) if xs else np.zeros((0, 2))
+
+
+IC = ind_corridor(X.industrial_sig())
+if IC is not None and not IC.is_empty:
+    a0 = X.direct_area_ha(IC, conn_xy(net0, e0), R)
+    a1 = X.direct_area_ha(IC, conn_xy(net1, e1), R)
+    st.metric(f"產業用地（移工通勤代理指標）：走廊內距『可一車直達綠線車站』路線站牌 {R} m 內的面積",
+              f"{a1:,.1f} ha", f"{a1 - a0:+,.1f} ha（S0 {a0:,.1f}／走廊內共 {IC.area / 1e4:,.1f} ha）",
+              help="產業用地＝OSM landuse=industrial＋產管局產業園區範圍圖；走廊＝7 站各 1,500 m。代理指標不等於移工人口。")
+
+s0 = pd.DataFrame(e0["station"]).set_index(["code", "dist_m"])
+s1 = pd.DataFrame(e1["station"]).set_index(["code", "dist_m"])
+rows = []
+for c in CODES:
+    row = {"車站": f"{c} {NAMES[c]}"}
+    for d in [300, 500, 800]:
+        if (c, d) in s0.index:
+            a, b = s0.loc[(c, d), "stops"], s1.loc[(c, d), "stops"]
+            row[f"站牌 {d} m"] = f"{a} → {b}" + (f"（{b - a:+d}）" if b != a else "")
+    if (c, CONN) in s0.index:
+        a, b = s0.loc[(c, CONN), "routes"], s1.loc[(c, CONN), "routes"]
+        row[f"路線數 {CONN} m"] = f"{a} → {b}" + (f"（{b - a:+d}）" if b != a else "")
+    a, b = c0["per_station"][c]["direct"], c1["per_station"][c]["direct"]
+    row["可直達本站 65+"] = f"{a:,.0f} → {b:,.0f}" + (f"（{b - a:+,.0f}）" if round(b) != round(a) else "")
+    row["_chg"] = round(b) != round(a) or any("（" in str(v) for v in row.values())
+    rows.append(row)
+T = pd.DataFrame(rows)
+st.dataframe(T.drop(columns="_chg").style.apply(lambda r: ["background-color:#fff3cd" if T.loc[r.name, "_chg"] else ""] * len(r), axis=1),
+             hide_index=True, width="stretch")
+st.caption(f"「站牌 d m」＝車站 d m 步行等時圈內，情境中仍有公車停靠的站牌位置數（5 m 去重，接駁線車站端點也計入）。「路線數」以 {CONN} m 等時圈計。")
+
+g1, g2 = st.columns(2)
+with g1:
+    fig = go.Figure([go.Bar(name="S0 現況", x=CODES, y=[c0["per_station"][c]["direct"] for c in CODES], marker_color="#9ecae1"),
+                     go.Bar(name="自訂情境", x=CODES, y=[c1["per_station"][c]["direct"] for c in CODES], marker_color="#6a3d9a")])
+    fig.update_layout(barmode="group", height=320, margin=dict(l=10, r=10, t=40, b=10),
+                      title=f"各站 1.5 km 內可一車直達本站的 65+ 人口（步行 {R} m 到站牌）", legend=dict(orientation="h"))
+    st.plotly_chart(fig, width="stretch")
+with g2:
+    fig = go.Figure([go.Bar(name="S0 現況", x=CODES, y=[s0.loc[(c, 500), "stops"] if (c, 500) in s0.index else 0 for c in CODES], marker_color="#9ecae1"),
+                     go.Bar(name="自訂情境", x=CODES, y=[s1.loc[(c, 500), "stops"] if (c, 500) in s1.index else 0 for c in CODES], marker_color="#6a3d9a")])
+    fig.update_layout(barmode="group", height=320, margin=dict(l=10, r=10, t=40, b=10), title="各站步行 500 m 內有公車停靠的站牌位置數", legend=dict(orientation="h"))
+    st.plotly_chart(fig, width="stretch")
+
+if ss.scn_mods or ss.scn_feeders:
+    st.markdown("**駕駛人力明細（平日）**")
+    if DT.empty:
+        st.info("尚無可換算的路線。")
+    else:
+        show = DT.copy()
+        for c in ["S0_車公里", "情境_車公里", "S0_車小時", "情境_車小時"]:
+            show[c] = show[c].round(1)
+        for c in ["S0_班次", "情境_班次"]:
+            show[c] = show[c].round(2)
+        show["平日班次"] = [f"{int(t)}" if t == t and t else "—" for t in show.平日班次]
+        show["長度變化_km"] = [round(e1["length_km"].get(m["key"], 0.0) - rts[m["key"]]["line"].length / 1000, 2) for m in ss.scn_mods] + \
+                            [round(e1["length_km"].get(f"FEEDER-{i}", 0.0), 2) for i, f in enumerate(FEEDERS)]
+        st.dataframe(show[["路線", "類型", "長度變化_km", "平日班次", "速率_kmh", "速率來源", "S0_車公里", "情境_車公里", "S0_車小時", "情境_車小時", "S0_班次", "情境_班次"]],
+                     hide_index=True, width="stretch")
+        st.caption("車公里＝平日班次 × 單程長度；車輛小時＝車公里 ÷ 營運速率；約當駕駛班次＝車輛小時 ÷ 每班駕駛時數。"
+                   "既有路線平日班次取自 TDX 班表（星期三有營運的班次，依方向分列）；接駁線班次為側欄或自訂的**假設值**。"
+                   "只算行駛時間，未含端點休息、調度空車、場站往返、備勤與輪休，所以實際所需人力會比這裡高；「可移轉」只是換算，不代表可裁減人員。")
+
+with st.expander("計算方法與限制（請於簡報時一併說明）"):
+    st.markdown(f"""
+- **站牌數**：以 pilot/outputs/A2_isochrones.gpkg 的 OSM 步行等時圈判定，站牌位置以 5 m 網格去重。
+- **可一車直達本站**：某路線只要有任一站牌位於該車站 {CONN} m 步行等時圈內，就視為「直達本站」。未考慮班次、方向與營運時段。
+- **65+ 人口**：內政部戶政司 115 年 9 月村里 65 歲以上人口，依面積比例均分到 {M.GRID} m 格點（假設村里內人口均勻分布）；到站牌距離為**直線** {R} m，不是路網距離。
+- **研究範圍**：7 站各 {M.STUDY_R} m 圓形聯集；各站指標只計該站 {M.STUDY_R} m 內（相鄰車站範圍會重疊，各站數字不可相加）。
+- **路線長度**：既有路線用{'TDX Shape 實際線型' if src == 'tdx' else '站間直線近似線型'}；接駁線是點與點之間的直線，實際道路距離會更長。「刪除平行區段」假設車輛在保留段兩端折返，未計折返或調度空車距離。
+- **駕駛人力**：平日班次取自 TDX 班表；營運速率預設 {SPEED:g} km/h 為【假設，可調整】（A1 實測樣本足夠的路線可改用實測）；每班駕駛 {SHIFT_H:g} 小時為【假設，可調整】；未含休息、調度空車、備勤與輪休。
+- **產業用地（移工通勤代理指標）**：OSM landuse=industrial＋產管局產業園區範圍圖，只代表可能的就業地點，不等於移工人口；不知道宿舍位置與班別時間。
+- **尚未納入**：旅行時間、轉乘次數、道路能否行駛公車、場站容量、轉乘票價。這些都要在正式研究中補上。
+- **預設接駁線**由演算法挑選既有站牌，只是示意起點，不代表實際可行路線。
+""")

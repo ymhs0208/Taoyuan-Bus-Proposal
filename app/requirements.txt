@@ -1,0 +1,15 @@
+# 綠線接駁決策平台（展示版）
+# 版本固定為已知可在 Windows「智慧型應用程式控制」(Smart App Control) 下載入的版本。
+# 建議 Python 3.12（pyarrow 17.0.0 沒有 Python 3.13 的安裝檔）。
+pandas==2.2.3
+pyarrow==17.0.0
+pyogrio==0.9.0
+pyproj==3.6.1
+geopandas==1.0.1
+shapely>=2.0,<2.1
+numpy>=1.26,<2.2
+streamlit>=1.50,<2
+streamlit-folium>=0.22
+folium>=0.17
+branca>=0.7
+plotly>=5.20

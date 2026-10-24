@@ -1,0 +1,18 @@
+# virtualenv
+.venv/
+
+# bytecode
+__pycache__/
+*.py[cod]
+
+# secrets — TDX 金鑰只放環境變數，不要進版控
+.env
+.env.*
+
+# backups, caches, logs
+*.bak
+cache/
+logs/
+
+# raw pulled data（TDX 下載、站址表、村里資料、A1 樣本等）
+pilot/data/

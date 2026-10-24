@@ -8,7 +8,7 @@ import shapely
 import streamlit as st
 from streamlit_folium import st_folium
 
-from lib import data as D, driver as DR, metrics as M, proxy as X, ui
+from lib import data as D, driver as DR, metrics as M, proxy as X, rules as RU, ui
 
 ui.banner()
 st.title("🧪 情境模擬：現況和改法差在哪")
@@ -125,6 +125,41 @@ b3.button("A＋B 組合", on_click=preset_ab, width="stretch", type="primary")
 b4.button("清除，回到 S0", on_click=reset, width="stretch")
 if ss.get("_msg"):
     st.warning(ss.pop("_msg"))
+
+# ---- S2b：站出發的社區接駁（補弱站）
+st.markdown("**其他情境**")
+sb1, sb2 = st.columns(2)
+sb1.button("S2b｜G12 社區接駁線", on_click=preset_feeder, args=("G12",), width="stretch",
+           help="G12 長者多、接駁弱。從 G12 往周邊既有站牌挑最多 6 個，讓可一車到 G12 的長者增加最多，排成一圈。")
+sb2.button("S2b｜G14 社區接駁線", on_click=preset_feeder, args=("G14",), width="stretch",
+           help="與 B 相同，單獨加載（不含 A）。")
+
+
+# ---- S2a：切短＋接鐵路站
+def apply_s2a(k, code, a, b, rail, cut, walk):
+    ss.scn_mods = [m for m in ss.scn_mods if m["key"] != k] + [
+        dict(type="keep_range", key=k, **{"from": a, "to": b}, rail=rail, cut=cut, walk_m=walk, s2a=True,
+             desc=f"{rts[k]['short']}：切短，只保留 {rail}→{cut}（接鐵路站，於 {code} 轉乘綠線）")]
+
+
+with st.expander("S2a｜切短＋接鐵路站：選一條長路線，只保留『鐵路站端』到某座綠線站"):
+    rail_keys = [k for k in all_keys if RU.rail_end(rts[k]["stops"]) is not None]
+    if not rail_keys:
+        st.caption("這個資料來源找不到兩端是火車站／總站／轉運站的路線。")
+    else:
+        c1_, c2_ = st.columns(2)
+        k_ = c1_.selectbox("路線（兩端有鐵路站或轉運站者；依與綠線重疊排序）", rail_keys, key="s2a_route",
+                           index=rail_keys.index(gr_keys[0]) if gr_keys and gr_keys[0] in rail_keys else 0,
+                           format_func=lambda k: f"{rts[k]['label']}｜{RU.rail_end(rts[k]['stops'])[1]}")
+        code_ = c2_.selectbox("在哪一座綠線站轉乘", CODES, key="s2a_code", format_func=lambda c: f"{c} {NAMES[c]}")
+        sr_ = stg[stg.code == code_].iloc[0]
+        rg_ = RU.s2a_range(rts[k_]["stops"], sr_.geometry.x, sr_.geometry.y)
+        if rg_ is None:
+            st.caption("這條路線的鐵路端就是最靠近該站的站牌，無法切短。")
+        else:
+            st.caption(f"保留：{rg_['rail']} → {rg_['cut_name']}（第 {rg_['from'] + 1}–{rg_['to'] + 1} 站）；切點站牌距 {code_} 直線 {rg_['walk_m']:.0f} m（轉乘步行距離下限）。")
+            st.button("➕ 套用 S2a", key="s2a_go", type="primary", on_click=apply_s2a,
+                      args=(k_, code_, rg_["from"], rg_["to"], rg_["rail"], rg_["cut_name"], rg_["walk_m"]))
 
 left, right = st.columns([2, 3])
 
@@ -338,6 +373,82 @@ else:
     st.info("駕駛人力要有時刻表才算得出來。請改用左側的「交通部公開資料」。")
 c0, c1 = e0["coverage"], e1["coverage"]
 p0, p1 = c0["per_station"][focus], c1["per_station"][focus]
+
+# ---------------------------------------------------------------- 規則檢查
+st.subheader("三條設計規則檢查")
+st.caption("研究的核心主張是「可靠度與容量達標才裁切」。下面三項把規則落成檢查；門檻、車型容量都是【假設，可調】，不是標準；缺資料時會寫「無法檢查」，不猜數字。")
+RELS = RU.reliability()
+TH0 = RU.reliability_thresholds_default(RELS)
+with st.expander("門檻與車型假設（可調）", expanded=False):
+    t1c, t2c, t3c = st.columns(3)
+    TH = dict(cv=t1c.slider("班距變異係數 cv 上限", 0.1, 1.5, TH0["cv"], 0.05, key="rl_cv", help="預設為目前樣本的中位數，不是標準。"),
+              gap=t2c.slider("大間隔比例上限", 0.0, 0.6, TH0["gap"], 0.05, key="rl_gap"),
+              bunch=t3c.slider("併班比例上限", 0.0, 0.6, TH0["bunch"], 0.05, key="rl_bun"))
+    v1c, v2c, v3c = st.columns(3)
+    VEH = v1c.radio("接駁線車型", ["大型公車", "桃小巴"], key="rl_veh", horizontal=True)
+    CAP_BUS = v2c.number_input("大型公車載客數（座＋站）【假設】", 10, 120, 60, 5, key="rl_capbus", help="請以業者實際規格取代。")
+    CAP_MINI = v3c.number_input("桃小巴載客數（座＋站）【假設】", 5, 40, 25, 1, key="rl_capmini", help="請以業者實際規格取代。")
+    w1c, w2c = st.columns(2)
+    PEAK_TPH = w1c.number_input("接駁線尖峰每小時班次【假設】", 1.0, 20.0, 4.0, 0.5, key="rl_tph", help="4 班＝約 15 分鐘一班。")
+    LEN_CAP = w2c.number_input("新接駁線整圈長度上限（公里）【假設】", 2.0, 30.0, 8.0, 0.5, key="rl_lencap",
+                               help="背景規則：新線不可過長。上限值待與市府排班規則確認；此處用點間直線長度，是下限值。")
+if RELS is None:
+    st.info("沒有班距結果檔（outputs/A3_headway_summary.csv），規則一無法檢查。")
+
+st.markdown("**規則一：班距穩定才裁切**（被裁切或截短的路線，其保留部分會被依賴）")
+rule_rows, any_bad = [], False
+for m in ss.scn_mods:
+    r_ = rts[m["key"]]
+    gt = RU.route_gate(RELS, r_["sub"], r_["dir"], TH)
+    any_bad |= gt["status"] != "ok"
+    ico = {"ok": "✅", "fail": "⚠️", "nodata": "❔"}[gt["status"]]
+    row = {"對象": r_["label"], "改法": m["desc"].split("：", 1)[-1][:40], "檢查": f"{ico} {gt['why']}"}
+    if gt["status"] != "nodata":
+        row.update({"cv": round(gt["cv"], 2), "大間隔": round(gt["gap"], 2), "併班": round(gt["bunch"], 2),
+                    "班距班數": gt["n"]})
+    if m.get("s2a"):
+        row["轉乘步行(下限 m)"] = round(m.get("walk_m", 0))
+        if gt["status"] != "nodata":
+            row["預估轉乘等候(分)"] = round(gt["mean_min"] / 2, 1)
+    rule_rows.append(row)
+for f in FEEDERS:
+    rule_rows.append({"對象": f["name"], "改法": "新增接駁線", "檢查": "❔ 新線沒有歷史班距，須通車後監測才能確認"})
+    any_bad = True
+if rule_rows:
+    RT = pd.DataFrame(rule_rows)
+    for c_ in RT.columns:
+        if c_ not in ("對象", "改法", "檢查"):
+            RT[c_] = RT[c_].map(lambda v: "—" if pd.isna(v) else f"{v:g}")   # 無資料顯示「—」，不顯示 None／NaN
+    st.dataframe(RT, hide_index=True, width="stretch")
+    if any_bad:
+        st.warning("至少有一項被依賴的路線或新線班距不穩、或缺資料。依設計原則，這個改法**現在還不能算「可裁切」**；只是示意，需要更多天的資料才能判斷。")
+    else:
+        st.success("目前樣本下，被裁切路線的班距都在門檻內（單日示意，不代表常態）。")
+else:
+    st.caption("目前是現況，沒有被調整的路線。")
+if any(m.get("s2a") for m in ss.scn_mods):
+    st.caption("轉乘等候＝實際平均班距 ÷ 2（隨機到站的期望值，未含班距不穩造成的額外等待；單日樣本）。轉乘步行距離為直線，是下限。")
+
+st.markdown("**規則二：載客高的路線不降為桃小巴**")
+st.info("**無法檢查。** 要知道哪些路線載客高，需要各路線各站上下車量，這項資料沒有公開，列為市府資料媒合需求。"
+        "目前只在下面「容量」檢查接駁線本身會不會一個車型就裝不下。")
+if FEEDERS:
+    st.markdown("**接駁線的容量與長度（規則二的替代檢查、規則三）**")
+    cap_v = int(CAP_MINI if VEH == "桃小巴" else CAP_BUS)
+    cap_rows = []
+    for i, f in enumerate(FEEDERS):
+        ben = c1["per_station"][f["station"]]["direct"] - c0["per_station"][f["station"]]["direct"]
+        cp = RU.capacity(cap_v, PEAK_TPH, max(ben, 0))
+        L = e1["length_km"].get(f"FEEDER-{i}", 0.0)
+        lg = RU.length_gate(L, LEN_CAP)
+        cap_rows.append({"接駁線": f["name"], "車型": f"{VEH}（{cap_v} 人）", "每小時單向載客上限": int(cp["per_hr"]),
+                         "新增可一車到站的長者": int(round(max(ben, 0))),
+                         "載客上限相當於這群長者的": (f"{cp['share']:.0%}" if cp["share"] is not None else "—（沒有新增）"),
+                         "整圈直線長度(km)": round(L, 2), "長度": "✅ 在上限內" if lg["ok"] else f"⚠️ 超過 {LEN_CAP:g} km"})
+    st.dataframe(pd.DataFrame(cap_rows), hide_index=True, width="stretch")
+    st.caption("**怎麼讀：** 這裡不假設有多少人會搭。「載客上限相當於這群長者的 X%」意思是：同一小時只要這群長者有 X% 搭乘，車就滿了；"
+               "X 越小，越容易擠不上。號誌路口數沒有資料，未檢查；長度是點間直線（實際會更長）。尖峰班次、車型容量都是假設。")
+
 base_len = sum(rts[m["key"]]["line"].length for m in ss.scn_mods) / 1000
 new_len = sum(e1["length_km"].get(m["key"], 0.0) for m in ss.scn_mods)
 feed_len = sum(v for k, v in e1["length_km"].items() if k.startswith("FEEDER"))

@@ -8,6 +8,12 @@ pages = [
     "views/p3_scenario.py",
     "views/p4_before_after.py",
     "views/p5_about.py",
+    "views/p6_reliability.py",
+    "views/p7_plan1.py",
+    "views/p8_plan2.py",
+    "views/p9_plan3.py",
+    "views/p10_plan4.py",
+    "views/p11_plan5.py",
 ]
 failed = False
 for i, p in enumerate(pages):

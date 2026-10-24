@@ -31,17 +31,25 @@ if not H:
     st.stop()
 
 st.markdown("**三個可以先記住的結果**（示意方案，不是市府的決定）")
+st.caption(f"路線形狀來源：{D.SOURCES[src]}。左側可切換；兩個來源的數字不同，引用時請註明來源。")
+if src == "pdf":
+    st.warning("目前用市府站牌表（站和站用直線連），路線長度會偏短、也沒有班表；提案書與正式分析以「交通部公開資料」為準。")
 c1, c2, c3 = st.columns(3)
 
 s0 = H["s0_h"] / H["shift_h"]
 s1 = H["s1_h"] / H["shift_h"]
+has_sched = H["s0_h"] > 0  # 站牌表（pdf）來源沒有班表，無法換算駕駛班次；不可顯示成 0.0
 with c1:
-    st.metric("平日約當駕駛班次", f"{s1:.1f}", f"{s1 - s0:+.1f}（現況 {s0:.1f}）", delta_color="inverse")
-    st.caption(
-        f"估算，含假設：平均時速 {H['speed']:g} 公里、一位駕駛一班 {H['shift_h']:g} 小時。"
-        + ("有路線改用實測速度。" if H["a1_routes"] else "目前實測樣本不夠，全部用這個假設時速。")
-        + " 方案是縮短 GR，並幫 G14 加一條接駁。"
-    )
+    if has_sched:
+        st.metric("平日約當駕駛班次", f"{s1:.1f}", f"{s1 - s0:+.1f}（現況 {s0:.1f}）", delta_color="inverse")
+        st.caption(
+            f"估算，含假設：平均時速 {H['speed']:g} 公里、一位駕駛一班 {H['shift_h']:g} 小時。"
+            + ("有路線改用實測速度。" if H["a1_routes"] else "目前實測樣本不夠，全部用這個假設時速。")
+            + " 方案是縮短 GR，並幫 G14 加一條接駁。"
+        )
+    else:
+        st.metric("平日約當駕駛班次", "—")
+        st.caption("目前選的路線來源（市府站牌表）沒有班表，算不出駕駛班次。請在左側改選「交通部公開資料」。")
     if st.button("看駕駛人力怎麼換算", key="go_driver", use_container_width=True):
         st.switch_page("views/p3_scenario.py")
 
@@ -104,5 +112,11 @@ st.page_link("views/p1_overlap.py", label="1. 路線重疊地圖 — 哪些公�
 st.page_link("views/p2_access.py", label="2. 接駁缺口 — 哪一站附近的長者比較難走到公車站，班次夠不夠。")
 st.page_link("views/p3_scenario.py", label="3. 情境模擬 — 試著縮短平行路段、幫弱的站加接駁，看駕駛和長者會怎樣。")
 st.page_link("views/p4_before_after.py", label="4. 通車前後比較 — 通車後才能比快慢；現在只有很短的通車前樣本。")
+st.markdown("**改良方案（左側選單「改良方案」，每個方案一頁）**")
+st.page_link("views/p7_plan1.py", label="方案一｜GR 縮短成接駁")
+st.page_link("views/p8_plan2.py", label="方案二｜G14 社區接駁線")
+st.page_link("views/p9_plan3.py", label="方案三｜G12 補強")
+st.page_link("views/p10_plan4.py", label="方案四｜長路線切短、站內轉乘")
+st.page_link("views/p11_plan5.py", label="方案五｜班次改善")
 st.caption("想查數字從哪來、哪些還不能當結論，打開「關於資料」。")
 st.caption("名詞：班次＝時刻表一天開幾班；車公里＝班次數 × 路程；一車到站＝不用轉車就能到那座捷運站；約當駕駛班次＝把開車總時數換成「幾個人的一個班」（含假設）。")

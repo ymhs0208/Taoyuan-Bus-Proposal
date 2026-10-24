@@ -160,7 +160,8 @@ def inner_table(cell, spec):
     sp = cell.add_paragraph(); fmt_par(sp)
     t = cell.add_table(rows=2+len(spec['rows']), cols=ncol); table_borders(t, 4)
     total = LW + CW - 0.6
-    if ncol == 5: w = [3.0, 2.9, 2.4, 2.6, 2.7]
+    if spec.get('widths'): w = spec['widths']
+    elif ncol == 5: w = [3.0, 2.9, 2.4, 2.6, 2.7]
     elif spec['header'][0] == '指標': w = [5.6, 2.2, 2.6, 3.2]
     else: w = [3.6, 2.8, 3.8, 3.8]
     s = sum(w); w = [x*total/s for x in w]
@@ -263,5 +264,5 @@ def tabchars(keys):
 def figchars(keys): return sum(cnt(re.sub(r'\{R\d+\}','',FIGS[k][2])) for k in keys)
 print('摘要', cnt(ABSTRACT))
 print('研究動機', cnt(plain(MOTIVATION)))
-print('研究內容 text', cnt(plain(CONTENT)), '+tables', tabchars(['T1','T2','T3']), '+captions', figchars(['F1','F2','F3','F4']))
+print('研究內容 text', cnt(plain(CONTENT)), '+tables', tabchars(list(TABLES)), '+captions', figchars(list(FIGS)))
 print('預期效益', cnt(plain(OUTCOME)))

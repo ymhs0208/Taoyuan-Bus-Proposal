@@ -5,14 +5,24 @@ st.set_page_config(page_title="綠線接駁決策平台（展示版）", page_ic
 
 from lib import data as D  # noqa: E402
 
-pages = [
-    st.Page("views/p0_home.py", title="首頁", icon="🚌", default=True, url_path="home"),
-    st.Page("views/p1_overlap.py", title="路線重疊地圖", icon="🗺️", url_path="overlap"),
-    st.Page("views/p2_access.py", title="接駁缺口", icon="🚶", url_path="access"),
-    st.Page("views/p3_scenario.py", title="情境模擬", icon="🧪", url_path="scenario"),
-    st.Page("views/p4_before_after.py", title="通車前後比較", icon="⏱️", url_path="before-after"),
-    st.Page("views/p5_about.py", title="關於資料", icon="ℹ️", url_path="about"),
-]
+pages = {
+    "總覽": [
+        st.Page("views/p0_home.py", title="首頁", icon="🚌", default=True, url_path="home"),
+        st.Page("views/p1_overlap.py", title="路線重疊地圖", icon="🗺️", url_path="overlap"),
+        st.Page("views/p2_access.py", title="接駁缺口", icon="🚶", url_path="access"),
+        st.Page("views/p3_scenario.py", title="情境模擬", icon="🧪", url_path="scenario"),
+        st.Page("views/p6_reliability.py", title="班距可靠度", icon="📏", url_path="reliability"),
+        st.Page("views/p4_before_after.py", title="通車前後比較", icon="⏱️", url_path="before-after"),
+        st.Page("views/p5_about.py", title="關於資料", icon="ℹ️", url_path="about"),
+    ],
+    "改良方案": [
+        st.Page("views/p7_plan1.py", title="方案一｜GR 縮短成接駁", icon="1️⃣", url_path="plan1"),
+        st.Page("views/p8_plan2.py", title="方案二｜G14 社區接駁線", icon="2️⃣", url_path="plan2"),
+        st.Page("views/p9_plan3.py", title="方案三｜G12 補強", icon="3️⃣", url_path="plan3"),
+        st.Page("views/p10_plan4.py", title="方案四｜長路線切短", icon="4️⃣", url_path="plan4"),
+        st.Page("views/p11_plan5.py", title="方案五｜班次改善", icon="5️⃣", url_path="plan5"),
+    ],
+}
 nav = st.navigation(pages)
 
 with st.sidebar:

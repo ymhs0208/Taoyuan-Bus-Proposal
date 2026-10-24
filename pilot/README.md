@@ -96,3 +96,12 @@ sleep 2; pgrep -f scripts/06_collect_a1.py > logs/collector.pid
 4. **等時圈**：從離車站點最近的路網節點起算路網距離，可達路段兩側各緩衝 50 m（edge-buffer 法）。人口以村里面積比例分配，假設村里內人口均勻分布。
 5. **班次頻率**：取自 TDX Schedule。平日以週三代表；尖峰為平日 07–09、17–19，離峰為平日 09–17。桃園班表只有起點發車時刻，所以以起點發車時刻判定時段。
 6. **分析三（通車前基準）**：2026-10-24 起收集中，收滿 2–3 週前的摘要只是樣本，不是基準。週六上午 TDX 全市 A1 只有 71 輛車，涵蓋率【待查證】。
+
+## 班距可靠度（分析三，`scripts/11_headway.py`）
+不需金鑰，只讀 `data/a1/`。方法與限制寫在腳本開頭說明。
+```bash
+.venv/bin/python scripts/11_headway.py selftest    # 合成資料驗證（不依賴真實資料）
+.venv/bin/python scripts/11_headway.py coverage    # 資料量夠不夠
+.venv/bin/python scripts/11_headway.py analyze     # outputs/A3_headway_{summary,detail,coverage}.csv
+```
+只分析平日尖峰（離峰每 10 分鐘輪詢，內插誤差過大）。`gap_mult=2`、`bunch_mult=0.25` 為暫定門檻。`sufficient=False` 的組合不得引用。

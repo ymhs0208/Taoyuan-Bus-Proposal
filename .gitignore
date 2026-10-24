@@ -13,3 +13,6 @@ __pycache__/
 *.bak
 cache/
 logs/
+
+# TDX 歷史資料大檔（單日 ~370 MB，GitHub 單檔上限 100 MB）：只留本機
+pilot/data/a1_hist/

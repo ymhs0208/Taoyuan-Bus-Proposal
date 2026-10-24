@@ -58,7 +58,7 @@ acc["尖峰班次"] = [freq.get((c, d, "peak"), "待實測") for c, d in zip(acc
 acc["離峰班次"] = [freq.get((c, d, "off"), "待實測") for c, d in zip(acc.code, acc.dist_m)]
 acc["平日班次"] = [freq.get((c, d, "day"), "待實測") for c, d in zip(acc.code, acc.dist_m)]
 
-with st.sidebar:
+with st.sidebar.expander("接駁缺口的地圖設定"):
     st.markdown("**本頁設定**")
     rank_d = st.select_slider("用走路多遠來找最弱的站（公尺）", [300, 500, 800], value=500,
                               help="沿人行道走的距離，不是直線。")
@@ -128,7 +128,7 @@ with c2:
     fig2.update_layout(height=260, margin=dict(l=10, r=10, t=30, b=10), title="步行範圍內的 65 歲以上人數（依村里人口估計）")
     st.plotly_chart(fig2, width="stretch")
 
-st.subheader("各站明細")
+st.subheader("各站比較")
 tbl = acc.copy()
 tbl["弱站"] = tbl.code.isin(weak)
 tbl = tbl[["code", "name", "dist_m", "stop_positions", "n_routes", "尖峰班次", "離峰班次", "平日班次", "pop65_est", "pop_est", "iso_area_ha", "弱站", "routes"]]
@@ -141,7 +141,8 @@ def hl(row):
     return ["background-color:#fde0dd" if row["弱站"] else ""] * len(row)
 
 
-st.dataframe(tbl.style.apply(hl, axis=1), hide_index=True, height=560)
+with st.expander("各站完整明細（站牌、班次與人口）"):
+    st.dataframe(tbl.style.apply(hl, axis=1), hide_index=True, height=560, width="stretch")
 if not freq:
     st.info("尖峰、離峰一天開幾班：**還沒有班表**。補上交通部的時刻表之後，這裡會自動出現。")
 else:

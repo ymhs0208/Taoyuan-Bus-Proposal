@@ -15,7 +15,22 @@ _TR_INV = pyproj.Transformer.from_crs(4326, D.CRS_M, always_xy=True)
 BANNER = "展示版：試行分析，數據待複核"
 
 
+def presentation_style():
+    st.markdown("""<style>
+    [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {
+        color:#495567 !important; font-size:0.95rem !important;}
+    [data-testid="stMetricLabel"] {white-space:normal; font-size:1rem;}
+    [data-testid="stMetricLabel"] p {white-space:normal; overflow:visible;}
+    [data-testid="stMetric"] {background:#f5f8f6; border:1px solid #dce6df;
+        border-radius:12px; padding:16px; height:100%;}
+    [data-testid="stMetricValue"] {font-size:2rem;}
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {font-size:0.88rem !important;}
+    @media (max-width:640px) {h1 {font-size:1.8rem;} h3 {font-size:1.35rem;}}
+    </style>""", unsafe_allow_html=True)
+
+
 def banner():
+    presentation_style()
     src = D.current_source()
     src_txt = D.SOURCES.get(src, "（找不到公車資料）")
     st.markdown(
@@ -52,10 +67,13 @@ def ll_to_xy(lat, lon):
     return _TR_INV.transform(lon, lat)
 
 
-def base_map(zoom=13, fit=False):
+def base_map(zoom=13, fit=False, quiet=False):
     stg = D.stations()
     lat, lon = stg.lat.mean(), stg.lon.mean()
     m = folium.Map(location=[lat, lon], zoom_start=zoom, tiles="OpenStreetMap", control_scale=True)
+    if quiet:
+        m.get_root().header.add_child(folium.Element(
+            "<style>.leaflet-tile-pane {filter:grayscale(85%);opacity:0.60;}</style>"))
     if fit:
         m.fit_bounds([[stg.lat.min() - 0.004, stg.lon.min() - 0.006], [stg.lat.max() + 0.004, stg.lon.max() + 0.006]])
     return m

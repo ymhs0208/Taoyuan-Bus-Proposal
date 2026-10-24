@@ -6,6 +6,7 @@ pages = [
     "views/p1_overlap.py",
     "views/p2_access.py",
     "views/p3_scenario.py",
+    "views/p12_priority.py",
     "views/p4_before_after.py",
     "views/p5_about.py",
     "views/p6_reliability.py",

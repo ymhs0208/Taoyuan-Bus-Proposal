@@ -12,6 +12,7 @@ P.head("3️⃣ 方案三｜G12 補強",
        "G12 蘆興埤附近長者多，但直達公車少。該補在哪裡、需要補多少？",
        "G12 走路 500 公尺內尖峰每小時只有約 4 班，但 800 公尺內大約有 1,400 位 65 歲以上居民，是「長者多、接駁弱」最明顯的站。補強位置是候選，不是指定路線。")
 rsig = D.routes_sig(src)
+st.page_link("views/p12_priority.py", label="與 G14 用同班次、同工時比較乘客效益", icon="⚖️")
 net0, e0 = P.base(src, rsig)
 g12 = stg[stg.code == "G12"].iloc[0]
 sx, sy = g12.geometry.x, g12.geometry.y

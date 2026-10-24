@@ -6,6 +6,16 @@ Streamlit 網頁介面＋Folium 地圖，所有數字都由 `pilot/` 資料夾�
 > ⚠️ 展示版：試行分析，數據待複核。情境皆為研究示意，不代表桃園市政府或營運業者的方案；未進行任何問卷、訪談或實地調查。
 
 ## 頁面
+
+「G12／G14・先做哪一站」比較相同每日班次或相同服務工時上限，區分首次取得任一綠線站直達服務的人口與增加本站選擇的人口。
+到站時間模型固定同一目的站及同一人口群，拆解起點步行、公車候車／車內、轉乘步行與捷運候車；時間假設可調，並非實際旅次效益。
+預設資料下以首次服務人口／工時排序，G12 為優先現地驗證主方案。A＋B 仍保留為原始工具示範，不作為自動推薦。
+研究說明與假設敏感度見 `docs/scenario/G12_G14_主方案與乘客效益.md`；可用 `python app/tools/build_passenger_report.py` 由同一套模型更新說明及 `app/derived/G12_G14_*`。
+
+側欄依「① 看問題 → ② 比方案 → ③ 看結果」排列；五個改良方案、資料切換及本頁參數可展開查看。
+情境模擬預設載入 A＋B，先呈現可移轉約當駕駛班次、G14 長者直達服務增減與服務減少車站，
+再提供方案切換；自訂操作、地圖與完整比較均可展開。路線重疊圖以深綠粗線標出選中路線，其餘路線及底圖淡化。
+
 | 頁面 | 內容 |
 |---|---|
 | 首頁 | 一句話問題、三個重點數字（連到情境模擬或路線重疊地圖）、怎麼看這個網站 |
@@ -87,6 +97,9 @@ streamlit run app.py
 python tests/apptest_all.py            # Streamlit AppTest：每頁載入無例外
 python tests/apptest_interactions.py   # 情境操作
 python tests/apptest_driver.py         # A＋B 預設的駕駛人力數字
+python tests/apptest_priority.py       # 同班次、同工時上限與無時間改善的情境
+python -m unittest discover -s tests -p test_passenger.py  # 人口互斥分類、淨變化、時間分解與工時邊界
+python tests/browser_presentation.py   # 啟動 8601 後，檢查結果順序、地圖樣式、清除與手機版，更新 optimized_* 截圖
 pip install -r requirements-dev.txt && playwright install chromium
 streamlit run app.py --server.port 8601 &   # 另開終端
 python tests/screenshots.py            # 1280 寬截圖 → screens/

@@ -31,6 +31,7 @@ if not H:
     st.stop()
 
 st.markdown("**三個可以先記住的結果**（示意方案，不是市府的決定）")
+st.page_link("views/p12_priority.py", label="先選主方案：用相同班次／工時比較 G12、G14，分清首次服務與增加到站選擇", icon="⚖️")
 st.caption(f"路線形狀來源：{D.SOURCES[src]}。左側可切換；兩個來源的數字不同，引用時請註明來源。")
 if src == "pdf":
     st.warning("目前用市府站牌表（站和站用直線連），路線長度會偏短、也沒有班表；提案書與正式分析以「交通部公開資料」為準。")

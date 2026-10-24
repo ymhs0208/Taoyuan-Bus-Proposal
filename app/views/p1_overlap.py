@@ -1,6 +1,5 @@
 import re
 
-import branca.colormap as cm
 import folium
 import pandas as pd
 import plotly.express as px
@@ -12,13 +11,13 @@ from lib import data as D, metrics as M, ui
 ui.banner()
 st.title("🗺️ 路線重疊地圖")
 st.markdown("**這頁在回答：** 哪些公車和即將通車的綠線走在同一條路上？")
-st.caption("顏色愈深，代表這條公車有愈長的一段落在捷運站周圍。")
+st.caption("深綠色是目前選中的路線，灰色是其他路線；先選一條，就能看清楚它與綠線各站的關係。")
 if not ui.require_data():
     st.stop()
 
 src = D.current_source()
 rts = D.routes(src)
-with st.sidebar:
+with st.sidebar.expander("地圖範圍與路線篩選"):
     st.markdown("**本頁設定**")
     radius = st.select_slider("捷運站周圍看多遠（公尺）", [300, 500, 800], value=500, help="預設 500 公尺，就是站點附近一條街的距離。可改成 300 或 800，看結論會不會變。")
     ov = M.overlap_table(src, radius, D.routes_sig(src))
@@ -38,19 +37,27 @@ if trips:
 show = ov[ov.key.isin(chosen)] if chosen else ov.head(topn)
 top = ov.iloc[0]
 st.info(f"**先看這句：** 重疊最多的是 {top.方向}，約 {top.範圍內長度_km:.2f} 公里（這條路線的 {top.長度占比:.0%}）走在捷運站 {radius} 公尺以內。")
-vmax = max(0.05, float(ov.長度占比.max()))
-cmap = cm.LinearColormap(["#fde725", "#fd8d3c", "#d7301f", "#67000d"], vmin=0, vmax=vmax,
-                         caption=f"有多少比例的路線走在捷運站 {radius} 公尺以內")
-
-m = ui.base_map(zoom=13, fit=True)
+keys = list(show.key)
+pending = st.session_state.pop("_ov_pending", None)
+if pending in keys:
+    st.session_state["ov_detail"] = pending
+if st.session_state.get("ov_detail") not in keys:
+    st.session_state["ov_detail"] = keys[0]
+k = st.selectbox("選擇要聚焦的路線（也可點選地圖）", keys,
+                 format_func=lambda k: rts[k]["label"], key="ov_detail")
+st.caption("深綠粗線＝目前選中路線　｜　灰色細線＝其他路線　｜　綠色圓點＝捷運站")
+m = ui.base_map(zoom=13, fit=True, quiet=True)
+# Draw the selected route last so shared road sections remain visible.
+for _, r in show[show.key != k].iterrows():
+    for part in ui.line_coords(rts[r.key]["line"]):
+        folium.PolyLine(part, color="#7c8994", weight=2, opacity=0.22,
+                        tooltip=f"{rts[r.key]['label']}｜代碼 {r.key}").add_to(m)
+r = ov.set_index("key").loc[k]
+for part in ui.line_coords(rts[k]["line"]):
+    folium.PolyLine(part, color="white", weight=9, opacity=0.95, interactive=False).add_to(m)
+    folium.PolyLine(part, color="#146b3a", weight=5, opacity=1,
+                    tooltip=f"{rts[k]['label']}｜範圍內 {r.範圍內長度_km} km（{r.長度占比:.1%}）｜代碼 {k}").add_to(m)
 ui.add_stations(m, circles=radius)
-for _, r in show.iloc[::-1].iterrows():
-    rr = rts[r.key]
-    col = cmap(r.長度占比)
-    for part in ui.line_coords(rr["line"]):
-        folium.PolyLine(part, color=col, weight=4 if r.排名 > 3 else 6, opacity=0.85,
-                        tooltip=f"{rr['label']}｜範圍內 {r.範圍內長度_km} km（{r.長度占比:.1%}）｜代碼 {r.key}").add_to(m)
-cmap.add_to(m)
 
 c1, c2 = st.columns([3, 2])
 with c1:
@@ -63,33 +70,30 @@ if out and out.get("last_object_clicked_tooltip"):
 
 with c2:
     st.markdown(f"**重疊排行**（{len(ov)} 個方向在捷運站 {radius} 公尺內有站牌）")
-    st.dataframe(ov[["排名", "方向", "範圍內長度_km", "長度占比", "範圍內站牌", "觸及車站數"] + (["平日班次", "範圍內平日車公里"] if trips else []) + ["觸及車站"]],
-                 hide_index=True, height=540,
-                 column_config={"長度占比": st.column_config.ProgressColumn("占這條路線多長", format="percent", min_value=0, max_value=1),
-                                "範圍內長度_km": st.column_config.NumberColumn("在捷運站周圍的公里數", format="%.2f"),
-                                "範圍內站牌": "周圍的站牌數",
-                                "觸及車站數": "靠近幾座捷運站",
-                                "平日班次": "平日開幾班",
-                                "範圍內平日車公里": "周圍路段的車公里",
-                                "觸及車站": "靠近哪些站"})
-    st.caption("車公里＝平日班次數 × 在這個範圍裡的路線長度。班次是時刻表，不是實際有沒有準時。")
+    st.dataframe(ov[["排名", "方向", "範圍內長度_km"]],
+                 hide_index=True, height=540, width="stretch",
+                 column_config={"排名": st.column_config.NumberColumn("排名", width="small"),
+                                "方向": st.column_config.TextColumn("路線方向", width="medium"),
+                                "範圍內長度_km": st.column_config.NumberColumn("重疊 km", format="%.2f", width="small")})
+    st.caption("依重疊公里數排序；選擇上方路線或點地圖，可查看該路線。")
+if clicked and st.session_state.get("_ov_last_click") != clicked:
+    st.session_state["_ov_last_click"] = clicked
+    st.session_state["_ov_pending"] = clicked
+    st.rerun()
+
+with st.expander("完整重疊排行與班表"):
+    st.dataframe(ov.drop(columns="key"), hide_index=True, width="stretch")
+    st.caption("車公里＝平日班次數 × 重疊路段長度；班次來自時刻表。")
 
 st.divider()
 st.subheader("路線詳細資料")
-keys = list(show.key) if clicked is None or clicked in set(show.key) else [clicked] + list(show.key)
-if clicked and st.session_state.get("_ov_last_click") != clicked:
-    st.session_state["_ov_last_click"] = clicked
-    st.session_state["ov_detail"] = clicked
-if st.session_state.get("ov_detail") not in keys:
-    st.session_state["ov_detail"] = keys[0]
-k = st.selectbox("選擇路線（也可直接在地圖上點選路線）", keys, format_func=lambda k: rts[k]["label"], key="ov_detail")
 r = ov.set_index("key").loc[k]
 rr = rts[k]
-a, b, c, d = st.columns(4)
+a, b, c = st.columns(3)
 a.metric("整條路線多長", f"{r.全長_km} km", help="沿實際道路" if src == "tdx" else "站和站用直線連，會比實際路短")
 b.metric(f"其中在捷運站 {radius} 公尺內", f"{r.範圍內長度_km} km", f"{r.長度占比:.1%}", delta_color="off")
 c.metric("周圍站牌／全部站牌", f"{r.範圍內站牌}／{r.站數}")
-d.metric("靠近幾座捷運站", f"{r.觸及車站數} 站", r.觸及車站, delta_color="off")
+st.caption(f"靠近 {r.觸及車站數} 座捷運站：{r.觸及車站}")
 if trips and pd.notna(r.get("平日班次")):
     st.caption(f"時刻表：平日這個方向開 {int(r.平日班次)} 班，所以周圍這段一天大約 {r.範圍內平日車公里} 車公里（班次數 × 長度）。")
 

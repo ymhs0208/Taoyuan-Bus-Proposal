@@ -11,6 +11,7 @@ pages = {
         st.Page("views/p1_overlap.py", title="路線重疊地圖", icon="🗺️", url_path="overlap"),
         st.Page("views/p2_access.py", title="接駁缺口", icon="🚶", url_path="access"),
         st.Page("views/p3_scenario.py", title="情境模擬", icon="🧪", url_path="scenario"),
+        st.Page("views/p12_priority.py", title="G12／G14 主方案比較", icon="⚖️", url_path="priority"),
         st.Page("views/p6_reliability.py", title="班距可靠度", icon="📏", url_path="reliability"),
         st.Page("views/p4_before_after.py", title="通車前後比較", icon="⏱️", url_path="before-after"),
         st.Page("views/p5_about.py", title="關於資料", icon="ℹ️", url_path="about"),
@@ -23,11 +24,28 @@ pages = {
         st.Page("views/p11_plan5.py", title="方案五｜班次改善", icon="5️⃣", url_path="plan5"),
     ],
 }
-nav = st.navigation(pages)
+nav = st.navigation(pages, position="hidden")
 
 with st.sidebar:
-    st.markdown("### 綠線接駁決策平台（展示版）")
+    st.markdown("### 🚌 綠線接駁決策平台")
     st.caption("捷運綠線北段 G11–G15b 通車後的公車路網重整｜115年度 為桃園做研究・研究實作組")
+    st.page_link("views/p0_home.py", label="首頁・三個重點", icon="🏠")
+    st.markdown("**① 看問題**")
+    st.page_link("views/p1_overlap.py", label="哪些路線重疊", icon="🗺️")
+    st.page_link("views/p2_access.py", label="哪裡缺接駁", icon="🚶")
+    st.markdown("**② 比方案**")
+    st.page_link("views/p12_priority.py", label="G12／G14・先做哪一站", icon="⚖️")
+    st.page_link("views/p3_scenario.py", label="情境模擬・比較改法", icon="🧪")
+    with st.expander("五個改良方案"):
+        for page in pages["改良方案"]:
+            st.page_link(page)
+    st.markdown("**③ 看結果**")
+    st.page_link("views/p6_reliability.py", label="班距可靠度", icon="📏")
+    st.page_link("views/p4_before_after.py", label="通車前後比較", icon="⏱️")
+    with st.expander("資料來源與進階設定"):
+        st.page_link("views/p5_about.py", label="關於資料", icon="ℹ️")
+
+with st.sidebar.expander("切換資料與重新讀取"):
     av = D.available_sources()
     if av:
         if st.session_state.get("source") not in av:

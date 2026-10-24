@@ -13,6 +13,3 @@ __pycache__/
 *.bak
 cache/
 logs/
-
-# raw pulled data（TDX 下載、站址表、村里資料、A1 樣本等）
-pilot/data/

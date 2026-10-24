@@ -11,15 +11,16 @@ from streamlit_folium import st_folium
 from lib import data as D, driver as DR, metrics as M, proxy as X, ui
 
 ui.banner()
-st.title("🧪 情境模擬：S0 現況 vs. 自訂情境")
-st.caption("裁切既有路線、新增接駁線，指標即時由資料重算。所有情境皆為研究示意，不代表市府或業者方案。")
+st.title("🧪 情境模擬：現況和改法差在哪")
+st.markdown("**這頁在回答：** 如果把跟捷運走同一條路的公車縮短，改開接到車站的路線，駕駛夠不夠、長者會不會比較容易到站？")
+st.caption("所有改法都是研究示意，不是市府或業者的方案。下面的駕駛人力是估算，含假設。")
 if not ui.require_data():
     st.stop()
 src = D.current_source()
 rts = D.routes(src)
 stg = D.stations()
 if D.isochrones() is None or D.villages() is None:
-    st.warning("需要等時圈（A2_isochrones.gpkg）與村里人口（villages_pop65.gpkg）才能模擬。")
+    st.warning("還沒有「沿人行道走得到的範圍」或村里人口，這頁沒辦法模擬。檔名在「關於資料」。")
     st.stop()
 CODES = list(stg.code)
 NAMES = dict(zip(stg.code, stg.name))
@@ -32,18 +33,21 @@ ss.setdefault("fd_stops", [])
 # 切換資料來源時，既有路線代碼不同 → 清掉修改
 if ss.get("scn_src") != src:
     ss.scn_mods, ss.scn_src = [], src
+    ss.scn_autoload = None
 
 with st.sidebar:
     st.markdown("**模擬參數**")
-    R = st.select_slider("長者可接受步行距離（到站牌，直線 m）", [200, 300, 400, 500], value=300)
-    CONN = st.select_slider("「直達車站」判定：站牌在車站步行等時圈內（m）", [300, 500, 800], value=500)
-    st.markdown("**駕駛人力換算參數**")
-    SPEED = st.number_input("預設營運速率 km/h【假設，可調整】", 8.0, 40.0, 18.0, 0.5,
-                            help="pilot/data/tdx 沒有 S2STravelTime，桃園班表只有起點發車時刻，無法由班表算行駛時間。A1 樣本足夠時可改用實測。此值不是官方數字。")
-    USE_A1 = st.checkbox("A1 樣本足夠的路線改用實測速率", value=True,
-                         help=f"同車同路線相鄰兩次輪詢（間隔 30–180 秒）的直線位移 ÷ 時間，每路線方向至少 {DR.MIN_PAIRS} 組樣本才採用。")
-    SHIFT_H = st.number_input("每一駕駛班次的駕駛時數 h【假設，可調整】", 4.0, 12.0, 8.0, 0.5,
-                              help="用來把車輛小時換算成「約當駕駛班次」；未含休息、備勤、輪休。")
+    R = st.select_slider("長者願意走到站牌的距離（直線，公尺）", [200, 300, 400, 500], value=300,
+                         help="這裡用直線距離，不是沿人行道走。")
+    CONN = st.select_slider("怎樣算「一車到站」：站牌在車站步行範圍內（公尺）", [300, 500, 800], value=500,
+                            help="步行範圍是沿人行道走得到的範圍，不是直線。有一個站牌在這個範圍裡，就算這條路線可以一車到該站。")
+    st.markdown("**駕駛人力換算（都是假設，可改）**")
+    SPEED = st.number_input("假設平均時速（公里）【假設，可調整】", 8.0, 40.0, 18.0, 0.5,
+                            help="時刻表只有發車時間、沒有站和站要開多久，所以時速先用這個假設。不是官方數字。實測樣本夠的路線可以改用實際速度。")
+    USE_A1 = st.checkbox("樣本夠的路線改用實際速度", value=True,
+                         help=f"同一輛車、同一條路線，相鄰兩次回報（間隔 30–180 秒）的位移 ÷ 時間。每個方向至少 {DR.MIN_PAIRS} 筆才採用。")
+    SHIFT_H = st.number_input("一位駕駛一班算幾小時【假設，可調整】", 4.0, 12.0, 8.0, 0.5,
+                              help="用來把開車總時數換成「約當幾個人的一個班」。沒有算休息、待命、輪休。")
 
 
 @st.cache_resource(max_entries=40, show_spinner="重新計算情境指標…")
@@ -63,9 +67,9 @@ gr_keys = [k for k in rank_keys if rts[k]["sub"] == "GR"]
 TRIPS = D.weekday_trips() if src == "tdx" else {}
 _gr_trips = [TRIPS[k] for k in gr_keys if TRIPS.get(k)]
 with st.sidebar:
-    FT = st.number_input("預設接駁線平日班次（整圈）【假設，可調整】", 0, 200, int(max(_gr_trips)) if _gr_trips else 0, 1,
-                         help=("預設採 GR 現況平日單向班次（TDX 班表）作為比較基準" if _gr_trips else "沒有 GR 班表資料，請自行輸入") +
-                              "；套用於預設接駁線，與勾選「使用預設班次」的自訂接駁線。")
+    FT = st.number_input("新接駁線一天開幾班【假設，可調整】", 0, 200, int(max(_gr_trips)) if _gr_trips else 0, 1,
+                         help=("預設先用 GR 現在平日單方向的班次數（時刻表）當比較基準" if _gr_trips else "沒有 GR 的班表，請自己填") +
+                              "。用在預設接駁線，以及有勾「使用預設班次」的自訂接駁線。")
 
 
 # ---------------------------------------------------------------- 預設情境（callbacks）
@@ -93,12 +97,30 @@ def reset():
     ss.scn_mods, ss.scn_feeders, ss.fd_custom, ss.fd_stops = [], [], [], []
 
 
-st.markdown("**快速載入示意情境**（皆由資料與演算法即時產生，可再手動修改）")
+# 第一次進來就載入 A＋B，評審不用先按按鈕。按「清除」之後停留在現況，換資料來源才會重載。
+if gr_keys and ss.get("scn_autoload") != src:
+    preset_ab()
+    ss.scn_autoload = src
+
+if ss.get("scn_autoload") == src and gr_keys and ss.scn_feeders and ss.scn_mods:
+    only_gr = all(m.get("type") == "drop_parallel" and m.get("key") in set(gr_keys) for m in ss.scn_mods)
+    only_g14 = len(ss.scn_feeders) == 1 and ss.scn_feeders[0].get("preset") == "G14"
+    is_ab = only_gr and {m["key"] for m in ss.scn_mods} == set(gr_keys) and only_g14
+else:
+    is_ab = False
+if is_ab:
+    st.info("**先看這句：** 已先載入示意方案 A＋B（縮短跟綠線平行的 GR，並幫 G14 加一條接駁）。綠色大字是估算能挪出的駕駛班次，含假設。預設參數下，G14 的長者會變多，G12 和 G15b 會變少。")
+elif ss.scn_mods or ss.scn_feeders:
+    st.info("**先看這句：** 下面比的是「現況」和「你現在這個改法」。駕駛人力是估算，含假設。")
+else:
+    st.info("**先看這句：** 目前是現況，還沒有改路線。可按下方「A＋B 組合」看示意方案。")
+
+st.markdown("**快速載入示意方案**（由資料算出，還可以再改）")
 b1, b2, b3, b4 = st.columns(4)
 b1.button("A｜GR 平行段裁切", on_click=preset_gr, width="stretch", disabled=not gr_keys,
-          help="GR 雙向：從第一個到最後一個位於任一站 500 m 內的站牌之間的區段刪除，保留兩端（兩端各止於車站附近）。")
+          help="把 GR 兩個方向裡、夾在綠線車站中間的那一段拿掉，兩端還留著。")
 b2.button("B｜G14 接駁線", on_click=preset_feeder, args=("G14",), width="stretch",
-          help="在 G14 周邊 300–1,500 m 的既有站牌中，以貪婪法挑選最多 6 站，使「可一車直達 G14 的 65+ 人口」增加最多，再以最近鄰＋2-opt 排序串接成循環線。")
+          help="在 G14 周圍 300–1,500 公尺的現有站牌裡，挑最多 6 個，讓「能一車到 G14」的長者增加最多，再排成一圈。")
 b3.button("A＋B 組合", on_click=preset_ab, width="stretch", type="primary")
 b4.button("清除，回到 S0", on_click=reset, width="stretch")
 if ss.get("_msg"):
@@ -196,7 +218,7 @@ with left:
 
     with t3:
         if not ss.scn_mods and not ss.scn_feeders:
-            st.info("目前為 S0（現況），尚未加入任何調整。")
+            st.info("目前是現況，還沒有改路線。")
         for i, m in enumerate(list(ss.scn_mods)):
             c1, c2 = st.columns([5, 1])
             c1.markdown(f"✂️ {m['desc']}")
@@ -271,7 +293,7 @@ with right:
                                 tooltip=p["name"]).add_to(fm)
     ui.add_stations(fm)
     out = st_folium(fm, height=560, use_container_width=True, returned_objects=["last_clicked"], key="scn_map")
-    st.caption("綠色＝情境新增可一車直達聚焦車站的 65+ 居住範圍；紅色＝失去；紫灰＝維持。灰虛線＝S0 原路線；橘色＝調整後路線；紅點＝取消停靠；紫色＝接駁線（虛線為草稿）。")
+    st.caption("綠色＝改完之後新增加、可以一車到這站的長者住的地方；紅色＝反而搭不到了；紫灰＝沒變。灰虛線＝原來的路線；橘色＝改完的路線；紅點＝取消停靠；紫色＝新的接駁線。")
     if ss.get("fd_click") and out and out.get("last_clicked"):
         lc = out["last_clicked"]
         tag = (round(lc["lat"], 6), round(lc["lng"], 6))
@@ -283,7 +305,7 @@ with right:
 
 # ---------------------------------------------------------------- 結果
 st.divider()
-st.subheader("S0 現況 vs. 自訂情境")
+st.subheader("現況和這個改法的差別")
 # ---- 駕駛人力（頭條指標）
 SPEEDS = DR.a1_speeds() if USE_A1 else {}
 DT = DR.driver_table(rts, net1, ss.scn_mods, FEEDERS, TRIPS, SPEEDS, SPEED, SHIFT_H, USE_A1, e1["length_km"])
@@ -297,33 +319,37 @@ if TRIPS:
     no_fd = int(fd_part.平日班次.isna().sum()) if len(fd_part) else 0
     st.markdown(
         f"""<div style="background:#eef7ee;border:2px solid #1a7f37;border-radius:10px;padding:12px 18px;margin:6px 0 12px 0">
-        <div style="font-size:0.95rem;color:#1a5f2a">👷 <b>可移轉駕駛人力</b>（平日，約當駕駛班次）＝ 裁切節省 − 新接駁線所需</div>
+        <div style="font-size:0.95rem;color:#1a5f2a">👷 <b>可移轉駕駛人力</b>（平日，約當駕駛班次；估算，含假設）＝ 縮短路線省下的 − 新接駁需要的</div>
         <div style="font-size:2.3rem;font-weight:800;color:#145a24">{saved - need:+.1f} 班</div>
-        <div style="font-size:0.9rem;color:#333">裁切節省 {saved:.1f} 班 − 接駁線需要 {need:.1f} 班｜每班 {SHIFT_H:g} 小時【假設】、
-        預設速率 {SPEED:g} km/h【假設】{('、' + str(len(SPEEDS) - (1 if '_ALL' in SPEEDS else 0)) + ' 個路線方向用 A1 實測速率') if SPEEDS else '（A1 樣本尚不足，全部用預設速率）'}</div></div>""",
+        <div style="font-size:0.9rem;color:#333">縮短省下 {saved:.1f} 班 − 接駁需要 {need:.1f} 班｜一班 {SHIFT_H:g} 小時【假設】、
+        假設時速 {SPEED:g} 公里【假設】{('、' + str(len(SPEEDS) - (1 if '_ALL' in SPEEDS else 0)) + ' 個方向用實測速度') if SPEEDS else '（實測樣本還不夠，全部用假設時速）'}</div></div>""",
         unsafe_allow_html=True)
     if no_tt or no_fd:
         st.warning(f"{no_tt} 條調整路線沒有 TDX 班表、{no_fd} 條接駁線未設定班次，這些未計入人力換算。")
     d1, d2, d3 = st.columns(3)
-    d1.metric("平日車公里（有班表路線＋接駁線）", f"{CT['s1_km']:,.0f}", f"{CT['s1_km'] - CT['s0_km']:+,.0f}（S0 {CT['s0_km']:,.0f}）", delta_color="inverse")
-    d2.metric("平日車輛小時", f"{CT['s1_h']:,.1f}", f"{CT['s1_h'] - CT['s0_h']:+,.1f}（S0 {CT['s0_h']:,.1f}）", delta_color="inverse")
-    d3.metric("約當駕駛班次", f"{CT['s1_h'] / SHIFT_H:,.1f}", f"{(CT['s1_h'] - CT['s0_h']) / SHIFT_H:+,.1f}（S0 {CT['s0_h'] / SHIFT_H:,.1f}）", delta_color="inverse")
-    st.caption(f"範圍：有 TDX 班表的 {sum(1 for k in TRIPS if k in rts)} 個路線方向（7 站 800 m 步行範圍內的路線）＋情境中的接駁線。")
+    d1.metric("平日車公里（有班表的路線＋新接駁）", f"{CT['s1_km']:,.0f}", f"{CT['s1_km'] - CT['s0_km']:+,.0f}（現況 {CT['s0_km']:,.0f}）", delta_color="inverse",
+              help="車公里＝一天開幾班 × 路線長度（公里）。班次來自時刻表。")
+    d2.metric("平日車輛小時", f"{CT['s1_h']:,.1f}", f"{CT['s1_h'] - CT['s0_h']:+,.1f}（現況 {CT['s0_h']:,.1f}）", delta_color="inverse",
+              help="車輛小時＝車公里 ÷ 時速。只算車子在開的時間。")
+    d3.metric("約當駕駛班次", f"{CT['s1_h'] / SHIFT_H:,.1f}", f"{(CT['s1_h'] - CT['s0_h']) / SHIFT_H:+,.1f}（現況 {CT['s0_h'] / SHIFT_H:,.1f}）", delta_color="inverse",
+              help="約當駕駛班次＝車輛小時 ÷ 一班幾小時。估算，含假設，不是實際能裁掉的人數。")
+    st.caption(f"計算範圍：有時刻表的 {sum(1 for k in TRIPS if k in rts)} 個路線方向（捷運站步行 800 公尺內會經過的路線）加上新接駁線。")
 else:
-    st.info("駕駛人力換算需要 TDX 班表（pilot/data/tdx/Schedule_*.json.gz）與 TDX 資料來源；目前無法計算。")
+    st.info("駕駛人力要有時刻表才算得出來。請改用左側的「交通部公開資料」。")
 c0, c1 = e0["coverage"], e1["coverage"]
 p0, p1 = c0["per_station"][focus], c1["per_station"][focus]
 base_len = sum(rts[m["key"]]["line"].length for m in ss.scn_mods) / 1000
 new_len = sum(e1["length_km"].get(m["key"], 0.0) for m in ss.scn_mods)
 feed_len = sum(v for k, v in e1["length_km"].items() if k.startswith("FEEDER"))
 k1, k2, k3, k4 = st.columns(4)
-k1.metric(f"{focus} 1.5 km 內、可一車直達本站的 65+", ui.fmt_int(p1["direct"]), f"{p1['direct'] - p0['direct']:+,.0f} 人",
-          help=f"{focus} 周邊 {M.STUDY_R} m 範圍內，距離『有站牌在本站 {CONN} m 步行等時圈內的路線』之任一站牌 {R} m（直線）以內的 65+ 人口估計。範圍內 65+ 總數約 {p0['total']:,.0f} 人。")
-k2.metric("研究範圍內可一車直達綠線任一站的 65+", ui.fmt_int(c1["conn"]), f"{c1['conn'] - c0['conn']:+,.0f} 人",
-          help=f"研究範圍＝7 站各 {M.STUDY_R} m 圓形聯集，65+ 總數約 {c0['total']:,.0f} 人。")
-k3.metric(f"研究範圍內距任一公車站牌 {R} m 內的 65+", ui.fmt_int(c1["any"]), f"{c1['any'] - c0['any']:+,.0f} 人")
-k4.metric("路線單程長度變化（調整路線＋新接駁線）", f"{new_len - base_len + feed_len:+.2f} km",
-          f"既有 {base_len:.2f}→{new_len:.2f} km；新線 +{feed_len:.2f} km", delta_color="off")
+k1.metric(f"{focus} 附近 1.5 公里、能一車到本站的 65 歲以上", ui.fmt_int(p1["direct"]), f"{p1['direct'] - p0['direct']:+,.0f} 人",
+          help=f"{focus} 周圍 {M.STUDY_R} 公尺內，走路直線 {R} 公尺就到「能一車到本站」的公車站牌的 65 歲以上人數（估計）。這個範圍裡的 65 歲以上大約 {p0['total']:,.0f} 人。")
+k2.metric("七站附近、能一車到任一站的 65 歲以上", ui.fmt_int(c1["conn"]), f"{c1['conn'] - c0['conn']:+,.0f} 人",
+          help=f"範圍是 7 站各 {M.STUDY_R} 公尺圓圈加在一起，65 歲以上大約 {c0['total']:,.0f} 人。相鄰站會重疊，不要把各站人數相加。")
+k3.metric(f"七站附近、走路 {R} 公尺內有公車站的 65 歲以上", ui.fmt_int(c1["any"]), f"{c1['any'] - c0['any']:+,.0f} 人")
+k4.metric("路線長度變化（改過的＋新接駁）", f"{new_len - base_len + feed_len:+.2f} km",
+          f"原來的 {base_len:.2f}→{new_len:.2f} 公里；新線 +{feed_len:.2f} 公里", delta_color="off",
+          help="新接駁線用點和點的直線，實際沿路會更長。")
 
 
 
@@ -346,9 +372,9 @@ IC = ind_corridor(X.industrial_sig())
 if IC is not None and not IC.is_empty:
     a0 = X.direct_area_ha(IC, conn_xy(net0, e0), R)
     a1 = X.direct_area_ha(IC, conn_xy(net1, e1), R)
-    st.metric(f"產業用地（移工通勤代理指標）：走廊內距『可一車直達綠線車站』路線站牌 {R} m 內的面積",
-              f"{a1:,.1f} ha", f"{a1 - a0:+,.1f} ha（S0 {a0:,.1f}／走廊內共 {IC.area / 1e4:,.1f} ha）",
-              help="產業用地＝OSM landuse=industrial＋產管局產業園區範圍圖；走廊＝7 站各 1,500 m。代理指標不等於移工人口。")
+    st.metric(f"產業用地（代理指標，不是移工人數）：七站各 1.5 公里內，{R} 公尺內能搭到可一車進站的公車",
+              f"{a1:,.1f} 公頃", f"{a1 - a0:+,.1f} 公頃（現況 {a0:,.1f}／範圍內共 {IC.area / 1e4:,.1f} 公頃）",
+              help="產業用地來自開放街圖標成工業的範圍，加上經濟部產業園區範圍。只算七座車站各 1.5 公里以內。這不是移工人數。")
 
 s0 = pd.DataFrame(e0["station"]).set_index(["code", "dist_m"])
 s1 = pd.DataFrame(e1["station"]).set_index(["code", "dist_m"])
@@ -363,25 +389,25 @@ for c in CODES:
         a, b = s0.loc[(c, CONN), "routes"], s1.loc[(c, CONN), "routes"]
         row[f"路線數 {CONN} m"] = f"{a} → {b}" + (f"（{b - a:+d}）" if b != a else "")
     a, b = c0["per_station"][c]["direct"], c1["per_station"][c]["direct"]
-    row["可直達本站 65+"] = f"{a:,.0f} → {b:,.0f}" + (f"（{b - a:+,.0f}）" if round(b) != round(a) else "")
+    row["能一車到本站的 65 歲以上"] = f"{a:,.0f} → {b:,.0f}" + (f"（{b - a:+,.0f}）" if round(b) != round(a) else "")
     row["_chg"] = round(b) != round(a) or any("（" in str(v) for v in row.values())
     rows.append(row)
 T = pd.DataFrame(rows)
 st.dataframe(T.drop(columns="_chg").style.apply(lambda r: ["background-color:#fff3cd" if T.loc[r.name, "_chg"] else ""] * len(r), axis=1),
              hide_index=True, width="stretch")
-st.caption(f"「站牌 d m」＝車站 d m 步行等時圈內，情境中仍有公車停靠的站牌位置數（5 m 去重，接駁線車站端點也計入）。「路線數」以 {CONN} m 等時圈計。")
+st.caption(f"「站牌 N 公尺」＝沿人行道走到捷運站 N 公尺以內，這個改法還有停靠的公車站（5 公尺以內算同一個站）。「路線數」用 {CONN} 公尺的步行範圍。")
 
 g1, g2 = st.columns(2)
 with g1:
-    fig = go.Figure([go.Bar(name="S0 現況", x=CODES, y=[c0["per_station"][c]["direct"] for c in CODES], marker_color="#9ecae1"),
+    fig = go.Figure([go.Bar(name="現況", x=CODES, y=[c0["per_station"][c]["direct"] for c in CODES], marker_color="#9ecae1"),
                      go.Bar(name="自訂情境", x=CODES, y=[c1["per_station"][c]["direct"] for c in CODES], marker_color="#6a3d9a")])
     fig.update_layout(barmode="group", height=320, margin=dict(l=10, r=10, t=40, b=10),
-                      title=f"各站 1.5 km 內可一車直達本站的 65+ 人口（步行 {R} m 到站牌）", legend=dict(orientation="h"))
+                      title=f"各站 1.5 公里內，能一車到本站的 65 歲以上人數", legend=dict(orientation="h"))
     st.plotly_chart(fig, width="stretch")
 with g2:
-    fig = go.Figure([go.Bar(name="S0 現況", x=CODES, y=[s0.loc[(c, 500), "stops"] if (c, 500) in s0.index else 0 for c in CODES], marker_color="#9ecae1"),
+    fig = go.Figure([go.Bar(name="現況", x=CODES, y=[s0.loc[(c, 500), "stops"] if (c, 500) in s0.index else 0 for c in CODES], marker_color="#9ecae1"),
                      go.Bar(name="自訂情境", x=CODES, y=[s1.loc[(c, 500), "stops"] if (c, 500) in s1.index else 0 for c in CODES], marker_color="#6a3d9a")])
-    fig.update_layout(barmode="group", height=320, margin=dict(l=10, r=10, t=40, b=10), title="各站步行 500 m 內有公車停靠的站牌位置數", legend=dict(orientation="h"))
+    fig.update_layout(barmode="group", height=320, margin=dict(l=10, r=10, t=40, b=10), title="各站步行 500 公尺內，還有公車停的站牌數", legend=dict(orientation="h"))
     st.plotly_chart(fig, width="stretch")
 
 if ss.scn_mods or ss.scn_feeders:
@@ -397,21 +423,25 @@ if ss.scn_mods or ss.scn_feeders:
         show["平日班次"] = [f"{int(t)}" if t == t and t else "—" for t in show.平日班次]
         show["長度變化_km"] = [round(e1["length_km"].get(m["key"], 0.0) - rts[m["key"]]["line"].length / 1000, 2) for m in ss.scn_mods] + \
                             [round(e1["length_km"].get(f"FEEDER-{i}", 0.0), 2) for i, f in enumerate(FEEDERS)]
-        st.dataframe(show[["路線", "類型", "長度變化_km", "平日班次", "速率_kmh", "速率來源", "S0_車公里", "情境_車公里", "S0_車小時", "情境_車小時", "S0_班次", "情境_班次"]],
-                     hide_index=True, width="stretch")
-        st.caption("車公里＝平日班次 × 單程長度；車輛小時＝車公里 ÷ 營運速率；約當駕駛班次＝車輛小時 ÷ 每班駕駛時數。"
-                   "既有路線平日班次取自 TDX 班表（星期三有營運的班次，依方向分列）；接駁線班次為側欄或自訂的**假設值**。"
-                   "只算行駛時間，未含端點休息、調度空車、場站往返、備勤與輪休，所以實際所需人力會比這裡高；「可移轉」只是換算，不代表可裁減人員。")
+        st.dataframe(show[["路線", "類型", "長度變化_km", "平日班次", "速率_kmh", "速率來源", "S0_車公里", "情境_車公里", "S0_車小時", "情境_車小時", "S0_班次", "情境_班次"]].rename(columns={
+            "長度變化_km": "長度變化（公里）", "速率_kmh": "時速（公里）",
+            "S0_車公里": "現況車公里", "情境_車公里": "改後車公里",
+            "S0_車小時": "現況車輛小時", "情境_車小時": "改後車輛小時",
+            "S0_班次": "現況約當班次", "情境_班次": "改後約當班次",
+        }), hide_index=True, width="stretch")
+        st.caption("車公里＝一天的班次數 × 單程長度；車輛小時＝車公里 ÷ 時速；約當駕駛班次＝車輛小時 ÷ 一班幾小時。"
+                   "既有路線的班次來自時刻表（用星期三有開的班，去程和回程分開算）；接駁線的班次是側欄或自己填的**假設**。"
+                   "只算車子在開的時間，沒有算休息、空車調度、待命和輪休，所以實際需要的人會更多。「可移轉」只是換算，不代表可以裁員。")
 
-with st.expander("計算方法與限制（請於簡報時一併說明）"):
+with st.expander("計算方法與限制（簡報時請一併說明）"):
     st.markdown(f"""
-- **站牌數**：以 pilot/outputs/A2_isochrones.gpkg 的 OSM 步行等時圈判定，站牌位置以 5 m 網格去重。
-- **可一車直達本站**：某路線只要有任一站牌位於該車站 {CONN} m 步行等時圈內，就視為「直達本站」。未考慮班次、方向與營運時段。
-- **65+ 人口**：內政部戶政司 115 年 9 月村里 65 歲以上人口，依面積比例均分到 {M.GRID} m 格點（假設村里內人口均勻分布）；到站牌距離為**直線** {R} m，不是路網距離。
-- **研究範圍**：7 站各 {M.STUDY_R} m 圓形聯集；各站指標只計該站 {M.STUDY_R} m 內（相鄰車站範圍會重疊，各站數字不可相加）。
-- **路線長度**：既有路線用{'TDX Shape 實際線型' if src == 'tdx' else '站間直線近似線型'}；接駁線是點與點之間的直線，實際道路距離會更長。「刪除平行區段」假設車輛在保留段兩端折返，未計折返或調度空車距離。
-- **駕駛人力**：平日班次取自 TDX 班表；營運速率預設 {SPEED:g} km/h 為【假設，可調整】（A1 實測樣本足夠的路線可改用實測）；每班駕駛 {SHIFT_H:g} 小時為【假設，可調整】；未含休息、調度空車、備勤與輪休。
-- **產業用地（移工通勤代理指標）**：OSM landuse=industrial＋產管局產業園區範圍圖，只代表可能的就業地點，不等於移工人口；不知道宿舍位置與班別時間。
-- **尚未納入**：旅行時間、轉乘次數、道路能否行駛公車、場站容量、轉乘票價。這些都要在正式研究中補上。
-- **預設接駁線**由演算法挑選既有站牌，只是示意起點，不代表實際可行路線。
+- **有幾個站牌**：用沿人行道走得到的範圍來算（技術檔是步行等時圈）。5 公尺以內的站牌算同一個位置。
+- **一車到本站**：某條路線只要有一個站牌在該捷運站 {CONN} 公尺步行範圍內，就算「不用轉車就能到」。還沒有考慮班次、方向和幾點開。
+- **65 歲以上人數**：內政部 115 年 9 月的村里人口，依面積比例分到 {M.GRID} 公尺的格子（假設人在村里裡平均分布）。走到站牌用**直線** {R} 公尺，不是沿路走。
+- **範圍**：7 站各 {M.STUDY_R} 公尺的圓圈；每一站只算自己這圈（隔壁站會重疊，各站人數不能相加）。
+- **路線長度**：現有路線用{'車子實際走的形狀' if src == 'tdx' else '站和站之間的直線（會比實際路短）'}；新接駁是點和點的直線，實際沿路會更長。拿掉平行段時，假設車在剩下的兩端掉頭，沒有把掉頭和空車算進去。
+- **駕駛人力**：班次來自時刻表。時速預設 {SPEED:g} 公里是【假設，可調整】（樣本夠的路線可改用實測）。一班 {SHIFT_H:g} 小時是【假設，可調整】。沒有算休息、空車、待命和輪休。
+- **產業用地（移工通勤的代理指標）**：工廠或產業園區的範圍，只代表可能有人要去上班，不等於移工人數。
+- **還沒算**：旅行時間、要轉幾次車、路能不能開公車、場站夠不夠、轉乘票價。
+- **預設接駁線**是演算法挑的現有站牌，只是起點，不代表真的開得成。
 """)

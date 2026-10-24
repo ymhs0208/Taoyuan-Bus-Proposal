@@ -11,7 +11,8 @@ from lib import data as D, metrics as M, ui
 
 ui.banner()
 st.title("🗺️ 路線重疊地圖")
-st.caption("哪些公車路線與綠線北段平行？以車站圓形範圍內的路線長度與站牌數量化。")
+st.markdown("**這頁在回答：** 哪些公車和即將通車的綠線走在同一條路上？")
+st.caption("顏色愈深，代表這條公車有愈長的一段落在捷運站周圍。")
 if not ui.require_data():
     st.stop()
 
@@ -19,10 +20,10 @@ src = D.current_source()
 rts = D.routes(src)
 with st.sidebar:
     st.markdown("**本頁設定**")
-    radius = st.select_slider("車站範圍半徑（m）", [300, 500, 800], value=500, help="提案預設 500 m；可做敏感度分析")
+    radius = st.select_slider("捷運站周圍看多遠（公尺）", [300, 500, 800], value=500, help="預設 500 公尺，就是站點附近一條街的距離。可改成 300 或 800，看結論會不會變。")
     ov = M.overlap_table(src, radius, D.routes_sig(src))
     if ov.empty:
-        st.warning("沒有任何路線站牌落在範圍內。")
+        st.warning("這個距離內沒有任何公車的站牌。")
         st.stop()
     topn = st.slider("顯示排行前 N 名", 5, min(60, len(ov)), min(15, len(ov)))
     opts = list(ov.key)
@@ -35,9 +36,11 @@ if trips:
     ov["平日班次"] = [trips.get(k) for k in ov.key]
     ov["範圍內平日車公里"] = [round(t * l, 1) if t is not None else None for t, l in zip(ov.平日班次, ov.範圍內長度_km)]
 show = ov[ov.key.isin(chosen)] if chosen else ov.head(topn)
+top = ov.iloc[0]
+st.info(f"**先看這句：** 重疊最多的是 {top.方向}，約 {top.範圍內長度_km:.2f} 公里（這條路線的 {top.長度占比:.0%}）走在捷運站 {radius} 公尺以內。")
 vmax = max(0.05, float(ov.長度占比.max()))
 cmap = cm.LinearColormap(["#fde725", "#fd8d3c", "#d7301f", "#67000d"], vmin=0, vmax=vmax,
-                         caption=f"路線長度落在車站 {radius} m 範圍內的比例")
+                         caption=f"有多少比例的路線走在捷運站 {radius} 公尺以內")
 
 m = ui.base_map(zoom=13, fit=True)
 ui.add_stations(m, circles=radius)
@@ -59,11 +62,17 @@ if out and out.get("last_object_clicked_tooltip"):
         clicked = mm.group(1)
 
 with c2:
-    st.markdown(f"**重疊排行**（{len(ov)} 個路線方向有站牌落在 {radius} m 範圍內）")
+    st.markdown(f"**重疊排行**（{len(ov)} 個方向在捷運站 {radius} 公尺內有站牌）")
     st.dataframe(ov[["排名", "方向", "範圍內長度_km", "長度占比", "範圍內站牌", "觸及車站數"] + (["平日班次", "範圍內平日車公里"] if trips else []) + ["觸及車站"]],
                  hide_index=True, height=540,
-                 column_config={"長度占比": st.column_config.ProgressColumn("長度占比", format="percent", min_value=0, max_value=1),
-                                "範圍內長度_km": st.column_config.NumberColumn("範圍內長度 km", format="%.2f")})
+                 column_config={"長度占比": st.column_config.ProgressColumn("占這條路線多長", format="percent", min_value=0, max_value=1),
+                                "範圍內長度_km": st.column_config.NumberColumn("在捷運站周圍的公里數", format="%.2f"),
+                                "範圍內站牌": "周圍的站牌數",
+                                "觸及車站數": "靠近幾座捷運站",
+                                "平日班次": "平日開幾班",
+                                "範圍內平日車公里": "周圍路段的車公里",
+                                "觸及車站": "靠近哪些站"})
+    st.caption("車公里＝平日班次數 × 在這個範圍裡的路線長度。班次是時刻表，不是實際有沒有準時。")
 
 st.divider()
 st.subheader("路線詳細資料")
@@ -77,12 +86,12 @@ k = st.selectbox("選擇路線（也可直接在地圖上點選路線）", keys,
 r = ov.set_index("key").loc[k]
 rr = rts[k]
 a, b, c, d = st.columns(4)
-a.metric("全長", f"{r.全長_km} km", help=rr["line_kind"])
-b.metric(f"{radius} m 範圍內長度", f"{r.範圍內長度_km} km", f"{r.長度占比:.1%}", delta_color="off")
-c.metric("範圍內站牌／總站數", f"{r.範圍內站牌}／{r.站數}")
-d.metric("觸及車站", f"{r.觸及車站數} 站", r.觸及車站, delta_color="off")
+a.metric("整條路線多長", f"{r.全長_km} km", help="沿實際道路" if src == "tdx" else "站和站用直線連，會比實際路短")
+b.metric(f"其中在捷運站 {radius} 公尺內", f"{r.範圍內長度_km} km", f"{r.長度占比:.1%}", delta_color="off")
+c.metric("周圍站牌／全部站牌", f"{r.範圍內站牌}／{r.站數}")
+d.metric("靠近幾座捷運站", f"{r.觸及車站數} 站", r.觸及車站, delta_color="off")
 if trips and pd.notna(r.get("平日班次")):
-    st.caption(f"TDX 班表：平日 {int(r.平日班次)} 班（單向）→ 範圍內平日約 {r.範圍內平日車公里} 車公里（＝班次 × 範圍內長度，時刻表值）。")
+    st.caption(f"時刻表：平日這個方向開 {int(r.平日班次)} 班，所以周圍這段一天大約 {r.範圍內平日車公里} 車公里（班次數 × 長度）。")
 
 s = rr["stops"].reset_index(drop=True).copy()
 stg = D.stations()
@@ -96,7 +105,7 @@ fig = px.bar(s, x="站序", y="距最近車站_m", color="範圍內", hover_data
              color_discrete_map={"是": "#d7301f", "否": "#9ecae1"},
              labels={"距最近車站_m": "距最近綠線車站（m，直線）", "站序": "站序", "範圍內": f"{radius} m 內"})
 fig.add_hline(y=radius, line_dash="dot", line_color="#555")
-fig.update_layout(height=300, margin=dict(l=10, r=10, t=30, b=10), title="沿線各站與綠線車站的距離（紅色＝落在範圍內，可看出平行區段）")
+fig.update_layout(height=300, margin=dict(l=10, r=10, t=30, b=10), title="沿線每一站離最近的綠線車站有多遠（紅色＝在你選的範圍裡，可看出哪一段跟綠線平行）")
 st.plotly_chart(fig, width="stretch")
 with st.expander("站序表"):
     st.dataframe(s[["站序", "name", "最近車站", "距最近車站_m", "範圍內"]].rename(columns={"name": "站名"}), hide_index=True)
@@ -115,7 +124,9 @@ with st.expander(f"試行分析原始輸出（pilot/outputs/A1_*.csv，共 {len(
             st.dataframe(a1, hide_index=True)
     qc = D.read_csv("outputs/A1_qc_cleaning_log.csv")
     if qc is not None:
-        st.markdown(f"資料清理紀錄（{len(qc)} 筆）：drop_spike＝座標尖刺點剔除；split_jump_gt8km＝站間 >8 km 跳躍處切開")
+        st.markdown(f"資料清理紀錄（{len(qc)} 筆）：剔除明顯跳開的座標；站和站直線超過 8 公里時，把路線切開、只留最長的一段。")
         st.dataframe(qc, hide_index=True)
-st.caption(f"計算方式：路線線型與車站 {radius} m 圓形範圍聯集的交集長度（EPSG:3826）。線型：{'TDX Shape' if src == 'tdx' else '站間直線近似'}。"
-           "「方向」在 TDX 為去／返程，在 PDF 版為站址表欄位型態（不等於 TDX SubRoute）。")
+st.caption(f"路線形狀：{'車子實際走的路' if src == 'tdx' else '站和站用直線連接'}。")
+with st.expander("算法（給要查證的人）"):
+    st.markdown(f"把路線和「每個捷運站周圍 {radius} 公尺圓圈」重叠的長度加總（座標系統 EPSG:3826）。"
+                "「方向」在交通部資料是去程／回程；在市府站牌表是表上的不同欄，兩者不一定是同一件事。")

@@ -35,7 +35,7 @@ with sync_playwright() as p:
     exe = "/usr/bin/google-chrome"
     b = p.chromium.launch(executable_path=exe if Path(exe).exists() else None, args=["--no-sandbox"])
     pg = b.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
-    shots = [("", "1_路線重疊地圖"), ("access", "2_接駁缺口"), ("scenario", "3_情境模擬_S0"),
+    shots = [("", "0_首頁"), ("overlap", "1_路線重疊地圖"), ("access", "2_接駁缺口"), ("scenario", "3_情境模擬_預設A+B"),
              ("before-after", "4_通車前後比較"), ("about", "5_關於資料")]
     for path, name in shots:
         pg.goto(f"{BASE}/{path}")

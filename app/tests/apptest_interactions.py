@@ -13,4 +13,4 @@ at.selectbox(key="fd_station").set_value("G13"); at.run()
 # PDF 來源
 at.sidebar.radio[0].set_value("pdf"); at.run(); print("pdf scenario", ex(at))
 [b for b in at.button if b.label.startswith("A＋B")][0].click(); at.run(); print("pdf A+B", ex(at), [(m.value,m.delta) for m in at.metric])
-at2=AppTest.from_file("../app.py", default_timeout=300); at2.run(); at2.select_slider[0].set_value(800); at2.run(); print("p1 800", ex(at2))
+at2=AppTest.from_file("../app.py", default_timeout=300); at2.run(); at2.switch_page("views/p1_overlap.py"); at2.run(); at2.select_slider[0].set_value(800); at2.run(); print("p1 800", ex(at2))

@@ -23,7 +23,7 @@ for i, p in enumerate(pages):
     if i == 0:
         titles = [t.value for t in at.title]
         print("default titles:", titles)
-        if not any("綠線通車後" in t for t in titles):
+        if not any("真正需要" in t for t in titles):
             print("FAIL: default page is not 首頁")
             failed = True
         home_text = "\n".join(
@@ -33,17 +33,10 @@ for i, p in enumerate(pages):
         )
         print("  home metrics:", [(m.label, m.value, m.delta) for m in at.metric])
         checks = {
-            "driver value 133.8": any(m.value == "133.8" for m in at.metric),
-            "driver delta -4.4 / 138.1": any(m.delta and "-4.4" in m.delta and "138.1" in m.delta for m in at.metric),
-            "G14 2,332": any(str(m.value).startswith("2,332") for m in at.metric),
-            "G14 delta 1,018": any(m.delta and "1,018" in m.delta and "1,313" in m.delta for m in at.metric),
-            "GR 4.40": any("4.40" in str(m.value) for m in at.metric),
-            "G12 tradeoff": "8,806" in home_text and "8,773" in home_text and "-33" in home_text,
-            "G15b tradeoff": "873" in home_text and "845" in home_text and "-28" in home_text,
-            "GR before lengths": "17.31" in home_text and "17.25" in home_text,
-            "industrial 12 and 8 with a stop": "12 塊" in home_text and "8 塊" in home_text,
-            "assumption label": "估算，含假設" in home_text,
-            "disclaimer": "展示版" in home_text and "試行分析" in home_text,
+            "conditional decision": "可先進一步驗證" in home_text,
+            "fleet tradeoff": "至少 2 輛" in home_text and "至少 1 輛" in home_text,
+            "not actual passengers": "不是實際乘客" in home_text,
+            "no legacy headline": not any(m.value == "133.8" for m in at.metric),
         }
         for name, ok in checks.items():
             print(f"  {'OK' if ok else 'FAIL'} {name}")

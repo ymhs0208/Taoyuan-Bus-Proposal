@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lib.passenger import allocation, best_access, population_changes, recommend
+from lib.passenger import allocation, best_access, population_changes, recommend, screen, screened_priority
 
 
 class PassengerTests(unittest.TestCase):
@@ -47,6 +47,25 @@ class PassengerTests(unittest.TestCase):
     def test_no_time_benefit_means_no_time_winner(self):
         rows = [dict(station=c, first=100, first_per_hour=10, choice_per_hour=20, time_per_hour=0) for c in ["G12", "G14"]]
         self.assertIsNone(recommend(rows, "改善到站時間優先"))
+
+    def test_resource_gate_blocks_winner_without_promoting_runner_up(self):
+        rows = [dict(station='G12', first=359, first_per_hour=20, choice_per_hour=100,
+                     time_per_hour=16, cycle_min=35, headway=32, trips=30, improved=286),
+                dict(station='G14', first=.79, first_per_hour=.05, choice_per_hour=90,
+                     time_per_hour=3, cycle_min=29, headway=32, trips=30, improved=39)]
+        self.assertEqual(screened_priority(rows), 'G12')
+        self.assertEqual(screen(rows[0])['fleet'], 2)
+        self.assertIsNone(screened_priority(rows, max_fleet=1))
+        self.assertTrue(screen(rows[1], max_fleet=1)['eligible'])
+        for r in rows:
+            r.update(headway=60, improved=0)
+        self.assertIsNone(screened_priority(rows))
+        self.assertEqual(len(screen(rows[0])['reasons']), 2)
+
+    def test_no_service_never_passes_screen(self):
+        row = dict(cycle_min=35, headway=None, trips=0, improved=0)
+        self.assertFalse(screen(row)['eligible'])
+        self.assertIsNone(screen(row)['fleet'])
 
 
 if __name__ == "__main__":

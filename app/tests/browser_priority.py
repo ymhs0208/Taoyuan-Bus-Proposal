@@ -8,14 +8,14 @@ with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=str(edge) if edge.exists() else None, headless=True)
     page = browser.new_page(viewport={"width": 1440, "height": 1100})
     page.goto("http://localhost:8601/priority")
-    page.get_by_test_id("stDataFrame").first.wait_for(timeout=180000)
+    page.get_by_text("進階：再探索裁切與接駁組合", exact=True).wait_for(timeout=180000)
     assert page.get_by_test_id("stException").count() == 0
-    page.get_by_text("優先驗證主方案：G12 社區接駁。", exact=False).first.wait_for()
+    page.get_by_text("G12 社區接駁可優先進一步驗證。", exact=False).first.wait_for()
     page.locator('[data-testid="stSpinner"]').wait_for(state="hidden", timeout=180000)
     page.wait_for_timeout(1500)  # Let Streamlit finish applying responsive element widths.
     page.screenshot(path=str(out / "priority_same_trips.png"), full_page=True)
     page.get_by_text("相同工時上限", exact=True).click()
-    page.get_by_text("目前條件下，時間效益沒有明確勝者", exact=False).first.wait_for(timeout=180000)
+    page.get_by_text("目前沒有可優先推進的主方案", exact=False).first.wait_for(timeout=180000)
     assert page.get_by_test_id("stException").count() == 0
     page.wait_for_timeout(1500)
     page.screenshot(path=str(out / "priority_same_hours.png"), full_page=True)
@@ -26,9 +26,15 @@ with sync_playwright() as p:
     assert page.get_by_test_id("stException").count() == 0
     mobile = browser.new_page(viewport={"width": 390, "height": 844})
     mobile.goto("http://localhost:8601/priority")
-    mobile.get_by_test_id("stDataFrame").first.wait_for(timeout=180000)
+    mobile.get_by_text("進階：再探索裁切與接駁組合", exact=True).wait_for(timeout=180000)
     mobile.wait_for_timeout(1500)
     mobile.screenshot(path=str(out / "priority_mobile.png"), full_page=True)
     assert mobile.locator('[data-testid=stMain]').evaluate('(el) => el.scrollWidth <= el.clientWidth')
+    page.goto("http://localhost:8601/")
+    page.get_by_text("進階探索與資料核對", exact=True).wait_for(timeout=180000)
+    assert page.get_by_test_id("stException").count() == 0
+    assert page.get_by_text("Page not found", exact=True).count() == 0
+    page.wait_for_timeout(1500)
+    page.screenshot(path=str(out / "home_decision.png"), full_page=True)
     print("PASS: priority page, capped resource warning, mobile layout, scenario population breakdown")
     browser.close()

@@ -29,17 +29,17 @@ nav = st.navigation(pages, position="hidden")
 with st.sidebar:
     st.markdown("### 🚌 綠線接駁決策平台")
     st.caption("捷運綠線北段 G11–G15b 通車後的公車路網重整｜115年度 為桃園做研究・研究實作組")
-    st.page_link("views/p0_home.py", label="首頁・三個重點", icon="🏠")
+    st.page_link("views/p0_home.py", label="首頁・研究結論", icon="🏠")
     st.markdown("**① 看問題**")
     st.page_link("views/p1_overlap.py", label="哪些路線重疊", icon="🗺️")
     st.page_link("views/p2_access.py", label="哪裡缺接駁", icon="🚶")
     st.markdown("**② 比方案**")
     st.page_link("views/p12_priority.py", label="G12／G14・先做哪一站", icon="⚖️")
     st.page_link("views/p3_scenario.py", label="情境模擬・比較改法", icon="🧪")
-    with st.expander("五個改良方案"):
+    with st.expander("進階：五個探索方案"):
         for page in pages["改良方案"]:
             st.page_link(page)
-    st.markdown("**③ 看結果**")
+    st.markdown("**③ 看驗證**")
     st.page_link("views/p6_reliability.py", label="班距可靠度", icon="📏")
     st.page_link("views/p4_before_after.py", label="通車前後比較", icon="⏱️")
     with st.expander("資料來源與進階設定"):

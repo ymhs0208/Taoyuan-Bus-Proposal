@@ -123,9 +123,22 @@ def time_changes(profile, feeder, length, count, walk_kmh, walk_limit, speed,
         a = float(np.average(baseline[key][improved], weights=weights[improved])) if total else None
         b = float(np.average(after[key][improved], weights=weights[improved])) if total else None
         component_rows.append(dict(項目=label, 現況分鐘=a, 改後分鐘=b, 變化分鐘=b-a if a is not None else None))
+    examples = []
+    # Reproducible spatial examples, not observed people or selected best-case gains.
+    for i in range(1, len(stops)):
+        distance = np.hypot(profile["x"] - xy[i, 0], profile["y"] - xy[i, 1])
+        j = int(np.argmin(distance))
+        if distance[j] > walk_limit:
+            continue
+        parts = []
+        for label, key in [("起點步行", "walk"), ("公車候車", "wait"), ("公車車內", "ride"),
+                           ("轉乘步行", "interchange_walk"), ("捷運候車", "transfer"), ("合計", "total")]:
+            parts.append(dict(項目=label, 現況分鐘=float(baseline[key][j]), 改後分鐘=float(after[key][j])))
+        examples.append(dict(stop=str(stops.iloc[i]["name"]), distance=float(distance[j]),
+                             feeder=bool(after["feeder"][j]), parts=parts))
     return dict(improved=float(total), users=float(users),
                 mean_saved=float(np.average((baseline["total"] - after["total"])[improved], weights=weights[improved])) if total else 0.0,
-                components=component_rows,
+                components=component_rows, examples=examples,
                 feeder_components=[dict(站牌=str(stops.iloc[i]["name"]), 公車候車分鐘=wait,
                                         車內至車站分鐘=float(opt[3]), 轉乘步行分鐘=float(opt[4] / (walk_kmh * 1000 / 60)))
                                    for i, opt in enumerate(options, start=1)])
@@ -144,6 +157,30 @@ def recommend(rows, objective):
     if len(ranked) < 2 or abs(score(ranked[0]) - score(ranked[1])) < 0.5:
         return None
     return ranked[0]["station"]
+
+
+def screen(row, max_headway=40, max_fleet=2):
+    """User-defined model gates, never an operating approval or actual roster."""
+    headway = row.get("headway")
+    fleet = int(np.ceil(row["cycle_min"] / headway)) if headway and row["trips"] > 0 else None
+    reasons = []
+    if not headway or row["trips"] <= 0:
+        reasons.append("資源不足一個完整班次")
+    elif headway > max_headway:
+        reasons.append(f"班距約 {headway:.0f} 分鐘，超過自訂 {max_headway:g} 分鐘")
+    if fleet is not None and fleet > max_fleet:
+        reasons.append(f"理想均勻排班至少需 {fleet} 輛，超過自訂 {max_fleet} 輛")
+    if row["improved"] <= 0:
+        reasons.append("未估得至少改善 1 分鐘的潛在人口")
+    return dict(eligible=not reasons, fleet=fleet, reasons=reasons,
+                status="可進一步驗證" if not reasons else "未達自訂條件")
+
+
+def screened_priority(rows, max_headway=40, max_fleet=2):
+    # Do not silently promote the runner-up when the relative winner fails a gate.
+    code = recommend(rows, "補服務空白優先")
+    winner = next((r for r in rows if r["station"] == code), None)
+    return code if winner and screen(winner, max_headway, max_fleet)["eligible"] else None
 
 
 @st.cache_data(max_entries=24, show_spinner="以相同資源比較 G12、G14…")

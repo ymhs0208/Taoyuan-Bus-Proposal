@@ -25,7 +25,7 @@ def presentation_style():
         border-radius:12px; padding:16px; height:100%;}
     [data-testid="stMetricValue"] {font-size:2rem;}
     [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {font-size:0.88rem !important;}
-    @media (max-width:640px) {h1 {font-size:1.8rem;} h3 {font-size:1.35rem;}}
+    @media (max-width:640px) {h1 {font-size:1.8rem !important;} h3 {font-size:1.35rem !important;}}
     </style>""", unsafe_allow_html=True)
 
 
